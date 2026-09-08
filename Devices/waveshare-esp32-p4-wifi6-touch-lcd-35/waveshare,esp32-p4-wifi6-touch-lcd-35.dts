@@ -1,0 +1,185 @@
+/dts-v1/;
+
+#include <tactility/bindings/root.h>
+#include <tactility/bindings/esp32_ble.h>
+#include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_i2c.h>
+#include <tactility/bindings/esp32_i2s.h>
+#include <tactility/bindings/esp32_pwm_ledc.h>
+#include <tactility/bindings/esp32_sdmmc.h>
+#include <tactility/bindings/esp32_spi.h>
+#include <tactility/bindings/esp32_uart.h>
+#include <tactility/bindings/esp32_usbhost.h>
+#include <tactility/bindings/esp32_wifi.h>
+#include <tactility/bindings/gpio_hog.h>
+#include <tactility/bindings/pwm_backlight.h>
+#include <bindings/axp2101.h>
+#include <bindings/es8311.h>
+#include <bindings/ft6x36.h>
+#include <bindings/st7796.h>
+
+/ {
+	compatible = "root";
+	model = "Waveshare ESP32-P4-WIFI6-Touch-LCD-3.5";
+
+	wifi0 {
+		compatible = "espressif,esp32-wifi";
+		status = "disabled";
+	};
+
+	ble0 {
+		compatible = "espressif,esp32-ble";
+		status = "disabled";
+	};
+
+	gpio0 {
+		compatible = "espressif,esp32-gpio";
+		gpio-count = <57>;
+	};
+
+	// NS4150B power amp SD/EN (active-high per datasheet). Held high at boot so the
+	// ES8311's DAC output actually reaches the speaker. The ES8311 driver hardcodes
+	// pa_pin=-1 and does not manage this line itself.
+	pa_enable {
+		compatible = "gpio-hog";
+		pin = <&gpio0 53 GPIO_FLAG_NONE>;
+		mode = <GPIO_HOG_MODE_OUTPUT_HIGH>;
+	};
+
+	// Must be declared before the ES8311 node so the phandle resolves.
+	i2s0: i2s0 {
+		compatible = "espressif,esp32-i2s";
+		port = <I2S_NUM_0>;
+		pin-mclk     = <&gpio0 13 GPIO_FLAG_NONE>;   // MCLK
+		pin-bclk     = <&gpio0 12 GPIO_FLAG_NONE>;   // BCLK / SCLK
+		pin-ws       = <&gpio0 10 GPIO_FLAG_NONE>;   // LRCK / WS
+		pin-data-out = <&gpio0  9 GPIO_FLAG_NONE>;   // DSDIN (ESP -> codec DAC)
+		pin-data-in  = <&gpio0 11 GPIO_FLAG_NONE>;   // ASDOUT (codec ADC -> ESP)
+	};
+
+	i2c_internal: i2c0 {
+		compatible = "espressif,esp32-i2c";
+		port = <I2C_NUM_0>;
+		clock-frequency = <400000>;
+		pin-sda = <&gpio0 7 GPIO_FLAG_NONE>;
+		pin-scl = <&gpio0 8 GPIO_FLAG_NONE>;
+
+		axp2101: axp2101 {
+			// PMIC on the same shared I2C bus as touch/codec (see schematic sheet "PMIC").
+			// VBAT header connects directly here; capacity is estimated from battery
+			// voltage in the driver's power-supply child (piecewise Li-ion curve).
+			compatible = "x-powers,axp2101";
+			reg = <0x34>;
+		};
+
+		es8311: es8311@18 {
+			// Audio codec (schematic sheet "Codec"). Shares I2C with touch and AXP2101.
+			// I2S clocks/data routed via i2s0 above. NS4150B power amp is enabled
+			// separately via the pa_enable gpio-hog on GPIO53 (ES8311 driver
+			// hardcodes pa_pin=-1 and never touches it).
+			compatible = "everest,es8311";
+			reg = <0x18>;
+			i2s = <&i2s0>;
+		};
+
+		touch0 {
+			compatible = "focaltech,ft6x36";
+			reg = <0x38>;
+			x-max = <320>;
+			y-max = <480>;
+			pin-reset = <&gpio0 29 GPIO_FLAG_NONE>;
+			pin-interrupt = <&gpio0 50 GPIO_FLAG_NONE>;
+		};
+	};
+
+	display_backlight_pwm {
+		compatible = "espressif,esp32-pwm-ledc";
+		pin = <&gpio0 28 GPIO_FLAG_NONE>;
+		period-ns = <200000>;
+		ledc-timer = <1>;
+		ledc-channel = <0>;
+	};
+
+	display_backlight {
+		compatible = "pwm-backlight";
+		status = "disabled";
+		pwm = <&display_backlight_pwm>;
+	};
+
+	spi0 {
+		compatible = "espressif,esp32-spi";
+		host = <SPI2_HOST>;
+		cs-gpios = <&gpio0 23 GPIO_FLAG_NONE>;
+		pin-mosi = <&gpio0 20 GPIO_FLAG_NONE>;
+		pin-sclk = <&gpio0 21 GPIO_FLAG_NONE>;
+		// Must hold one whole LVGL draw buffer (320 x 480/10 lines x 2 bytes = 30720) in a
+		// single SPI transaction. Left at the 0 default, the bus caps transfers near 4092
+		// bytes, so esp_lcd splits each tile into chunks whose address/length are not
+		// 64-byte aligned. On the P4 (SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE) the SPI driver
+		// then bounce-buffers every chunk through heap_caps_aligned_alloc(MALLOC_CAP_DMA);
+		// when that allocation fails it returns ESP_ERR_NO_MEM without logging, esp_lcd
+		// drops the tile, and LVGL still marks it clean - leaving part-drawn screens until
+		// something invalidates them again. 30720 is a multiple of 64 and stays under the
+		// P4's 32767-byte per-transaction limit (SPI_MS_DATA_BITLEN is 18 bits).
+		max-transfer-size = <30720>;
+
+		display0: display@0 {
+			compatible = "sitronix,st7796";
+			horizontal-resolution = <320>;
+			vertical-resolution = <480>;
+			mirror-x;
+			invert-color;
+			bgr-order;
+			pixel-clock-hz = <80000000>;
+			spi-mode = <3>;
+			pin-dc = <&gpio0 26 GPIO_FLAG_NONE>;
+			pin-reset = <&gpio0 27 GPIO_FLAG_NONE>;
+			backlight = <&display_backlight>;
+		};
+	};
+
+	// AetherLink accessory UART: crossed three-wire link to the removable
+	// Device-B compute accessory (A GPIO2 TX -> B GPIO3 RX, A GPIO3 RX <-
+	// B GPIO2 TX, shared GND; no power-rail jumpers). 921600 8N1, no flow
+	// control, configured by the AccessoryLink UART backend service.
+	// Carries the same u32be + bounded-JSON protocol-v2 stream as USB.
+	// GPIO2/GPIO3 are unassigned elsewhere in this devicetree (I2C is 7/8).
+	uart_accessory: uart-accessory {
+		compatible = "espressif,esp32-uart";
+		port = <UART_NUM_1>;
+		pin-tx = <&gpio0 2 GPIO_FLAG_NONE>;
+		pin-rx = <&gpio0 3 GPIO_FLAG_NONE>;
+	};
+
+	sdmmc0 {
+		compatible = "espressif,esp32-sdmmc";
+		pin-clk = <&gpio0 43 GPIO_FLAG_NONE>;
+		pin-cmd = <&gpio0 44 GPIO_FLAG_NONE>;
+		pin-d0 = <&gpio0 39 GPIO_FLAG_NONE>;
+		pin-d1 = <&gpio0 40 GPIO_FLAG_NONE>;
+		pin-d2 = <&gpio0 41 GPIO_FLAG_NONE>;
+		pin-d3 = <&gpio0 42 GPIO_FLAG_NONE>;
+		bus-width = <4>;
+		slot = <SDMMC_HOST_SLOT_0>;
+		max-freq-khz = <SDMMC_FREQ_HIGHSPEED>;
+		on-chip-ldo-chan = <4>;
+	};
+
+	// AetherLink USB accessory host path. The board's USB OTG Type-C is
+	// wired to the P4's dedicated USBD_P/N pads (controller 0, internal
+	// FS PHY behind the UTMI interface), so peripheral-map BIT(0).
+	// Device B (AetherCore compute accessory) attaches through a powered
+	// hub and enumerates as a TinyUSB CDC-ACM device (0x303A:0x4001);
+	// vid/pid are discovery hints only - AetherLink protocol-v2
+	// CAPABILITIES negotiation is authoritative for accessory identity.
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		peripheral-map = <0>;
+
+		usb_accessory: usb-accessory {
+			compatible = "espressif,esp32-usbhost-cdc";
+			vid = <0x303A>;
+			pid = <0x4001>;
+		};
+	};
+};

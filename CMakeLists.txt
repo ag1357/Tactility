@@ -108,8 +108,8 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     target_compile_definitions(freertos_kernel PUBLIC "projCOVERAGE_TEST=0")
 
     # EmbedTLS
-    set(ENABLE_TESTING OFF)
-    set(ENABLE_PROGRAMS OFF)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE) # FORCE: mbedtls re-enables tests otherwise
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
     add_subdirectory(Libraries/mbedtls)
 
     # SDL

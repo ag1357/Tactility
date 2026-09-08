@@ -42,6 +42,7 @@ extern Driver esp32_usbhost_driver;
 extern Driver esp32_usbhost_hid_driver;
 extern Driver esp32_usbhost_midi_driver;
 extern Driver esp32_usbhost_msc_driver;
+extern Driver esp32_usbhost_cdc_driver;
 #endif
 
 static error_t start() {
@@ -78,6 +79,7 @@ static error_t start() {
     check(driver_construct_add(&esp32_usbhost_hid_driver) == ERROR_NONE);
     check(driver_construct_add(&esp32_usbhost_midi_driver) == ERROR_NONE);
     check(driver_construct_add(&esp32_usbhost_msc_driver) == ERROR_NONE);
+    check(driver_construct_add(&esp32_usbhost_cdc_driver) == ERROR_NONE);
 #endif
     return ERROR_NONE;
 }
@@ -90,6 +92,7 @@ static error_t stop() {
     check(driver_remove_destruct(&esp32_wifi_driver) == ERROR_NONE);
 #endif
 #if SOC_USB_OTG_SUPPORTED
+    check(driver_remove_destruct(&esp32_usbhost_cdc_driver) == ERROR_NONE);
     check(driver_remove_destruct(&esp32_usbhost_msc_driver) == ERROR_NONE);
     check(driver_remove_destruct(&esp32_usbhost_midi_driver) == ERROR_NONE);
     check(driver_remove_destruct(&esp32_usbhost_hid_driver) == ERROR_NONE);

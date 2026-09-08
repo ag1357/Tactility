@@ -49,6 +49,12 @@ properties:
     type: int
     default: 40000000
     description: SPI pixel clock frequency in Hz
+  spi-mode:
+    type: int
+    default: 0
+    min: 0
+    max: 3
+    description: SPI mode passed to esp_lcd panel IO
   transaction-queue-depth:
     type: int
     default: 10

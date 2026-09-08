@@ -34,6 +34,7 @@
 #include <lvgl/widgets/toolbar.h>
 
 #include <tactility/concurrent/thread.h>
+#include <tactility/device.h>
 #include <tactility/drivers/audio_stream.h>
 #include <tactility/drivers/display.h>
 #include <tactility/drivers/grove.h>
@@ -78,6 +79,8 @@ namespace service {
     // Primary
     namespace audio { extern const ServiceManifest manifest; }
     namespace wifi { extern const ServiceManifest manifest; }
+    namespace accessorylink { extern const ServiceManifest uartManifest; }
+    namespace accessorylink { extern const ServiceManifest usbCdcManifest; }
 #ifdef ESP_PLATFORM
     namespace development { extern const ServiceManifest manifest; }
 #endif
@@ -115,6 +118,7 @@ namespace app {
     namespace appdetails { extern const AppManifest manifest; }
     namespace applist { extern const AppManifest manifest; }
     namespace appsettings { extern const AppManifest manifest; }
+    namespace audio { extern const AppManifest manifest; }
     namespace audiosettings { extern const AppManifest manifest; }
     namespace boot { extern const AppManifest manifest; }
     namespace development { extern const AppManifest manifest; }
@@ -164,6 +168,7 @@ namespace app {
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
     namespace chat { extern const AppManifest manifest; }
+    namespace aetherchat { extern const AppManifest manifest; }
 #endif
 }
 
@@ -181,6 +186,7 @@ static void registerInternalApps() {
     addAppManifest(app::appsettings::manifest);
     if (service::audio::isAvailable()) {
         addAppManifest(app::audiosettings::manifest);
+        addAppManifest(app::audio::manifest);
     }
     if (device_exists_of_type(&DISPLAY_TYPE)) {
         addAppManifest(app::kerneldisplay::manifest);
@@ -230,6 +236,7 @@ static void registerInternalApps() {
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
     addAppManifest(app::chat::manifest);
+    addAppManifest(app::aetherchat::manifest);
 #endif
 
     if (device_exists_of_type(&GROVE_TYPE)) {
@@ -316,6 +323,19 @@ static void registerAndStartServices() {
 #if defined(ESP_PLATFORM)
     if (device_exists_of_type(&RTC_TYPE)) {
         addService(service::rtctime::manifest);
+    }
+#endif
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
+    // AetherLink accessory backends (Device-B compute accessory link).
+    // Production transport is USB CDC-ACM through the devicetree
+    // "usb-accessory" node; the GPIO2/GPIO3 UART backend remains the
+    // universal fallback when the board has no such node. Only one backend
+    // may own AccessoryLinkService's single platform slot.
+    Device* usbAccessory = nullptr;
+    if (device_get_by_name("usb-accessory", &usbAccessory) == ERROR_NONE && usbAccessory != nullptr) {
+        addService(service::accessorylink::usbCdcManifest);
+    } else {
+        addService(service::accessorylink::uartManifest);
     }
 #endif
 }
