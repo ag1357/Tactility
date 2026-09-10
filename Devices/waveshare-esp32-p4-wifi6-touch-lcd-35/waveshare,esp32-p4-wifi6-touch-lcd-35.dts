@@ -181,5 +181,9 @@
 			vid = <0x303A>;
 			pid = <0x4001>;
 		};
+
+		usb_audio: usb-audio {
+			compatible = "espressif,esp32-usbhost-uac";
+		};
 	};
 };
