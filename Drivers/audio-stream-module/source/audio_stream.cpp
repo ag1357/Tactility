@@ -4,6 +4,7 @@
 #include <tactility/log.h>
 #include <tactility/drivers/audio_codec.h>
 #include <tactility/drivers/audio_stream.h>
+#include <tactility/memory.h>
 
 #include <cstring>
 #include <vector>
@@ -12,12 +13,53 @@
 
 namespace {
 
-// Linear-interpolation resampler. Cheap and good enough for voice/UI audio; S3/P4 have
-// plenty of headroom for this at the rates this subsystem targets (16k/44.1k/48k).
-// Operates on interleaved 16-bit PCM, which is what esp_codec_dev / our codec drivers use.
+struct ScratchBuffer {
+    ScratchBuffer() = default;
+
+    ~ScratchBuffer() {
+        memory_free(data);
+    }
+
+    bool ensure_size(size_t required_size) {
+        if (size >= required_size) {
+            return true;
+        }
+
+        // Decoder chunks are not guaranteed to have one fixed size. Grow
+        // geometrically so a slowly increasing high-water mark does not copy
+        // the PSRAM buffer on every write.
+        const size_t grown_size = size + size / 2;
+        const size_t allocation_size = grown_size > required_size ? grown_size : required_size;
+        const MemoryPolicy policy = {
+            .required = 0,
+            .desired = MEMORY_CAPABILITY_EXTERNAL,
+            .alignment = 0,
+        };
+        void* resized = memory_realloc_with_policy(data, allocation_size, &policy);
+        if (resized == nullptr) {
+            return false;
+        }
+        data = static_cast<uint8_t*>(resized);
+        size = allocation_size;
+        return true;
+    }
+
+    ScratchBuffer(const ScratchBuffer&) = delete;
+    ScratchBuffer& operator=(const ScratchBuffer&) = delete;
+
+    uint8_t* data = nullptr;
+    size_t size = 0;
+};
+
+// Linear-interpolation resampler for interleaved 16-bit PCM. Use fixed-point
+// positions because ESP32 targets without double-precision hardware cannot sustain
+// per-sample double arithmetic alongside decoding, display DMA, and USB audio.
 size_t resample_s16(const int16_t* in, size_t in_frames, uint8_t channels,
                    uint32_t in_rate, uint32_t out_rate,
-                   int16_t* out, size_t out_frame_capacity) {
+                   int16_t* out, size_t out_frame_capacity,
+                   std::vector<int16_t>& previous_frame,
+                   bool& has_previous_frame,
+                   uint64_t& source_position) {
     if (in_rate == out_rate) {
         size_t frames = (in_frames < out_frame_capacity) ? in_frames : out_frame_capacity;
         std::memcpy(out, in, frames * channels * sizeof(int16_t));
@@ -28,30 +70,84 @@ size_t resample_s16(const int16_t* in, size_t in_frames, uint8_t channels,
         return 0;
     }
 
-    double ratio = (double) in_rate / (double) out_rate;
+    constexpr uint8_t FRACTION_BITS = 32;
+    const uint64_t source_step = (static_cast<uint64_t>(in_rate) << FRACTION_BITS) / out_rate;
+    const size_t sequence_frames = in_frames + (has_previous_frame ? 1 : 0);
+
+    auto sample_at = [&](size_t frame, uint8_t channel) -> int16_t {
+        if (has_previous_frame) {
+            return frame == 0
+                ? previous_frame[channel]
+                : in[(frame - 1) * channels + channel];
+        }
+        return in[frame * channels + channel];
+    };
+
     size_t out_frames = 0;
     for (; out_frames < out_frame_capacity; out_frames++) {
-        double src_pos = (double) out_frames * ratio;
-        size_t src_index = (size_t) src_pos;
-        if (src_index + 1 >= in_frames) {
-            if (src_index >= in_frames) {
-                break;
-            }
-            // Last frame: no next sample to interpolate with, repeat it.
-            for (uint8_t channel = 0; channel < channels; channel++) {
-                out[out_frames * channels + channel] = in[src_index * channels + channel];
-            }
-            continue;
+        size_t src_index = static_cast<size_t>(source_position >> FRACTION_BITS);
+        // Keep the final source frame for interpolation with the next write
+        // instead of repeating it and introducing a click at every chunk edge.
+        if (src_index + 1 >= sequence_frames) {
+            break;
         }
 
-        double frac = src_pos - (double) src_index;
+        const uint32_t fraction = static_cast<uint32_t>(source_position);
         for (uint8_t channel = 0; channel < channels; channel++) {
-            int16_t a = in[src_index * channels + channel];
-            int16_t b = in[(src_index + 1) * channels + channel];
-            out[out_frames * channels + channel] = (int16_t) ((double) a + ((double) b - (double) a) * frac);
+            const int32_t a = sample_at(src_index, channel);
+            const int32_t b = sample_at(src_index + 1, channel);
+            const int64_t adjustment =
+                (static_cast<int64_t>(b - a) * fraction) >> FRACTION_BITS;
+            out[out_frames * channels + channel] = static_cast<int16_t>(a + adjustment);
         }
+        source_position += source_step;
     }
 
+    previous_frame.assign(
+        in + (in_frames - 1) * channels,
+        in + in_frames * channels);
+    has_previous_frame = true;
+    source_position -= static_cast<uint64_t>(sequence_frames - 1) << FRACTION_BITS;
+    return out_frames;
+}
+
+// Input callers provide a fixed-size destination but do not retain unread
+// codec samples. Preserve the legacy stateless behavior for that path rather
+// than discarding source frames when a stateful conversion fills the output.
+size_t resample_s16_stateless(const int16_t* in, size_t in_frames, uint8_t channels,
+                             uint32_t in_rate, uint32_t out_rate,
+                             int16_t* out, size_t out_frame_capacity) {
+    if (in_rate == out_rate) {
+        const size_t frames = in_frames < out_frame_capacity ? in_frames : out_frame_capacity;
+        std::memcpy(out, in, frames * channels * sizeof(int16_t));
+        return frames;
+    }
+    if (in_frames == 0) {
+        return 0;
+    }
+
+    constexpr uint8_t FRACTION_BITS = 32;
+    const uint64_t source_step = (static_cast<uint64_t>(in_rate) << FRACTION_BITS) / out_rate;
+    uint64_t source_position = 0;
+    size_t out_frames = 0;
+    for (; out_frames < out_frame_capacity; ++out_frames) {
+        const size_t source_index = static_cast<size_t>(source_position >> FRACTION_BITS);
+        if (source_index >= in_frames) {
+            break;
+        }
+
+        const size_t next_index =
+            source_index + 1 < in_frames ? source_index + 1 : source_index;
+        const uint32_t fraction = static_cast<uint32_t>(source_position);
+        for (uint8_t channel = 0; channel < channels; ++channel) {
+            const int32_t a = in[source_index * channels + channel];
+            const int32_t b = in[next_index * channels + channel];
+            const int64_t adjustment =
+                (static_cast<int64_t>(b - a) * fraction) >> FRACTION_BITS;
+            out[out_frames * channels + channel] = static_cast<int16_t>(a + adjustment);
+        }
+        source_position += source_step;
+    }
     return out_frames;
 }
 
@@ -99,8 +195,12 @@ struct AudioStreamHandleImpl : AudioStreamHandleData {
     uint8_t bytes_per_frame = 0;     // app-side frame size (config.channels)
     uint8_t codec_bytes_per_frame = 0; // codec-side frame size (codec_channels)
     float input_gain = 1.0f; // fixed digital gain multiplier, input direction only (see audio_codec_get_input_gain_multiplier)
-    std::vector<uint8_t> codec_buffer;    // raw codec-rate/codec-channel PCM, scratch
-    std::vector<uint8_t> convert_buffer;  // intermediate scratch for the second conversion stage
+    ScratchBuffer codec_buffer;    // raw codec-rate/codec-channel PCM, scratch
+    ScratchBuffer convert_buffer;  // intermediate scratch for the second conversion stage
+    std::vector<int16_t> resample_previous_frame;
+    std::vector<int16_t> resample_previous_frame_backup;
+    bool resample_has_previous_frame = false;
+    uint64_t resample_source_position = 0;
 
     // Lifetime guard: close_stream() can be triggered from a different task than the one
     // doing read()/write() (e.g. the Settings UI disabling output while SfxEngine's audio
@@ -411,33 +511,39 @@ error_t read_stream(AudioStreamHandle handle_base, void* out_data, size_t data_s
         }
     } else {
         // Read enough codec-rate frames to produce the requested number of output-rate frames.
-        size_t codec_frames = (size_t) ((double) requested_frames * ((double) handle->codec_rate / (double) handle->config.sample_rate)) + 2;
+        size_t codec_frames = static_cast<size_t>(
+            (static_cast<uint64_t>(requested_frames) * handle->codec_rate
+             + handle->config.sample_rate - 1)
+            / handle->config.sample_rate)
+            + 2;
         size_t codec_bytes_needed = codec_frames * handle->codec_bytes_per_frame;
-        if (handle->codec_buffer.size() < codec_bytes_needed) {
-            handle->codec_buffer.resize(codec_bytes_needed);
+        if (!handle->codec_buffer.ensure_size(codec_bytes_needed)) {
+            io_end(data, handle);
+            return ERROR_OUT_OF_MEMORY;
         }
 
         size_t codec_bytes_read = 0;
-        result = audio_codec_read(data->input_codec, handle->codec_buffer.data(), codec_bytes_needed, &codec_bytes_read, timeout);
+        result = audio_codec_read(data->input_codec, handle->codec_buffer.data, codec_bytes_needed, &codec_bytes_read, timeout);
         if (result == ERROR_NONE) {
             size_t codec_frames_read = codec_bytes_read / handle->codec_bytes_per_frame;
-            const int16_t* rate_input = reinterpret_cast<const int16_t*>(handle->codec_buffer.data());
+            const int16_t* rate_input = reinterpret_cast<const int16_t*>(handle->codec_buffer.data);
             uint8_t rate_input_channels = handle->codec_channels;
             size_t rate_input_frames = codec_frames_read;
 
             // Downmix first (while still at the codec's higher rate -- cheaper) if needed.
             if (!same_channels) {
                 size_t convert_bytes_needed = codec_frames_read * handle->bytes_per_frame;
-                if (handle->convert_buffer.size() < convert_bytes_needed) {
-                    handle->convert_buffer.resize(convert_bytes_needed);
+                if (!handle->convert_buffer.ensure_size(convert_bytes_needed)) {
+                    io_end(data, handle);
+                    return ERROR_OUT_OF_MEMORY;
                 }
                 convert_channels_s16(rate_input, codec_frames_read, handle->codec_channels,
-                                   reinterpret_cast<int16_t*>(handle->convert_buffer.data()), handle->config.channels);
-                rate_input = reinterpret_cast<const int16_t*>(handle->convert_buffer.data());
+                                   reinterpret_cast<int16_t*>(handle->convert_buffer.data), handle->config.channels);
+                rate_input = reinterpret_cast<const int16_t*>(handle->convert_buffer.data);
                 rate_input_channels = handle->config.channels;
             }
 
-            size_t out_frames = resample_s16(
+            size_t out_frames = resample_s16_stateless(
                 rate_input, rate_input_frames, rate_input_channels,
                 handle->codec_rate, handle->config.sample_rate,
                 reinterpret_cast<int16_t*>(out_data), requested_frames);
@@ -503,35 +609,55 @@ error_t write_stream(AudioStreamHandle handle_base, const void* in_data, size_t 
         // Upmix/downmix first (while still at the app's rate -- cheaper if downmixing) if needed.
         if (!same_channels) {
             size_t convert_bytes_needed = in_frames * handle->codec_bytes_per_frame;
-            if (handle->convert_buffer.size() < convert_bytes_needed) {
-                handle->convert_buffer.resize(convert_bytes_needed);
+            if (!handle->convert_buffer.ensure_size(convert_bytes_needed)) {
+                io_end(data, handle);
+                return ERROR_OUT_OF_MEMORY;
             }
             convert_channels_s16(rate_input, in_frames, handle->config.channels,
-                               reinterpret_cast<int16_t*>(handle->convert_buffer.data()), handle->codec_channels);
-            rate_input = reinterpret_cast<const int16_t*>(handle->convert_buffer.data());
+                               reinterpret_cast<int16_t*>(handle->convert_buffer.data), handle->codec_channels);
+            rate_input = reinterpret_cast<const int16_t*>(handle->convert_buffer.data);
             rate_input_channels = handle->codec_channels;
         }
 
-        size_t codec_frame_capacity = (size_t) ((double) rate_input_frames * ((double) handle->codec_rate / (double) handle->config.sample_rate)) + 2;
+        size_t codec_frame_capacity = static_cast<size_t>(
+            (static_cast<uint64_t>(rate_input_frames + 1) * handle->codec_rate
+             + handle->config.sample_rate - 1)
+            / handle->config.sample_rate)
+            + 1;
         size_t codec_bytes_capacity = codec_frame_capacity * handle->codec_bytes_per_frame;
-        if (handle->codec_buffer.size() < codec_bytes_capacity) {
-            handle->codec_buffer.resize(codec_bytes_capacity);
+        if (!handle->codec_buffer.ensure_size(codec_bytes_capacity)) {
+            io_end(data, handle);
+            return ERROR_OUT_OF_MEMORY;
         }
 
         size_t codec_frames;
+        handle->resample_previous_frame_backup = handle->resample_previous_frame;
+        const bool had_previous_frame = handle->resample_has_previous_frame;
+        const uint64_t previous_source_position = handle->resample_source_position;
         if (same_rate) {
             codec_frames = rate_input_frames;
-            std::memcpy(handle->codec_buffer.data(), rate_input, rate_input_frames * handle->codec_bytes_per_frame);
+            std::memcpy(handle->codec_buffer.data, rate_input, rate_input_frames * handle->codec_bytes_per_frame);
         } else {
             codec_frames = resample_s16(
                 rate_input, rate_input_frames, rate_input_channels,
                 handle->config.sample_rate, handle->codec_rate,
-                reinterpret_cast<int16_t*>(handle->codec_buffer.data()), codec_frame_capacity);
+                reinterpret_cast<int16_t*>(handle->codec_buffer.data), codec_frame_capacity,
+                handle->resample_previous_frame,
+                handle->resample_has_previous_frame,
+                handle->resample_source_position);
         }
 
         size_t codec_bytes_to_write = codec_frames * handle->codec_bytes_per_frame;
         size_t codec_bytes_written = 0;
-        result = audio_codec_write(data->output_codec, handle->codec_buffer.data(), codec_bytes_to_write, &codec_bytes_written, timeout);
+        result = audio_codec_write(data->output_codec, handle->codec_buffer.data, codec_bytes_to_write, &codec_bytes_written, timeout);
+        if (result == ERROR_NONE && codec_bytes_written != codec_bytes_to_write) {
+            result = ERROR_RESOURCE;
+        }
+        if (result != ERROR_NONE) {
+            handle->resample_previous_frame = handle->resample_previous_frame_backup;
+            handle->resample_has_previous_frame = had_previous_frame;
+            handle->resample_source_position = previous_source_position;
+        }
         if (result == ERROR_NONE && bytes_written != nullptr) {
             // The caller provided `data_size` worth of input; we consumed all of it (resampled/converted).
             *bytes_written = data_size;
