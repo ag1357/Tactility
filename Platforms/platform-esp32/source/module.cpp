@@ -43,6 +43,9 @@ extern Driver esp32_usbhost_hid_driver;
 extern Driver esp32_usbhost_midi_driver;
 extern Driver esp32_usbhost_msc_driver;
 extern Driver esp32_usbhost_cdc_driver;
+#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+extern Driver esp32_usbhost_uac_driver;
+#endif
 #endif
 
 static error_t start() {
@@ -80,6 +83,9 @@ static error_t start() {
     check(driver_construct_add(&esp32_usbhost_midi_driver) == ERROR_NONE);
     check(driver_construct_add(&esp32_usbhost_msc_driver) == ERROR_NONE);
     check(driver_construct_add(&esp32_usbhost_cdc_driver) == ERROR_NONE);
+#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+    check(driver_construct_add(&esp32_usbhost_uac_driver) == ERROR_NONE);
+#endif
 #endif
     return ERROR_NONE;
 }
@@ -92,6 +98,9 @@ static error_t stop() {
     check(driver_remove_destruct(&esp32_wifi_driver) == ERROR_NONE);
 #endif
 #if SOC_USB_OTG_SUPPORTED
+#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+    check(driver_remove_destruct(&esp32_usbhost_uac_driver) == ERROR_NONE);
+#endif
     check(driver_remove_destruct(&esp32_usbhost_cdc_driver) == ERROR_NONE);
     check(driver_remove_destruct(&esp32_usbhost_msc_driver) == ERROR_NONE);
     check(driver_remove_destruct(&esp32_usbhost_midi_driver) == ERROR_NONE);

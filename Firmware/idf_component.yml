@@ -88,6 +88,10 @@ dependencies:
     version: "1.1.4"
     rules:
       - if: "target in [esp32s3, esp32p4]"
+  espressif/usb_host_uac:
+    version: "1.5.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
   # CDC-ACM host class client: AetherLink USB accessory transport (Device A).
   espressif/usb_host_cdc_acm:
     version: "~2.1.0"
