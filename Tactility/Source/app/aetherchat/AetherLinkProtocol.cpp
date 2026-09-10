@@ -1,8 +1,9 @@
 #include <Tactility/app/aetherchat/AetherLinkProtocol.h>
-#include <Tactility/json/Reader.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <utility>
 
 namespace tt::app::aetherchat {
 
@@ -41,7 +42,7 @@ bool parseJsonString(const std::string& json, size_t& pos, std::string& out) {
         char c = json[i];
         if (c == '"') {
             pos = i + 1;
-            out = value;
+            out = std::move(value);
             return true;
         }
         if (c == '\\' && i + 1 < json.size()) {
@@ -191,30 +192,39 @@ bool jsonExtractStringArray(
     std::vector<std::string>& out
 ) {
     constexpr size_t MAX_VALUES = 8;
-    out.clear();
-    cJSON* root = cJSON_ParseWithLength(json.c_str(), json.size());
-    if (root == nullptr) {
-        return false;
-    }
-    const cJSON* container = root;
-    const cJSON* payload = cJSON_GetObjectItemCaseSensitive(root, "payload");
-    if (cJSON_IsObject(payload)) {
-        container = payload;
-    }
-    const cJSON* values = cJSON_GetObjectItemCaseSensitive(container, key);
-    const int count = cJSON_GetArraySize(values);
-    if (!cJSON_IsArray(values) || count < 0 || static_cast<size_t>(count) > MAX_VALUES) {
-        cJSON_Delete(root);
-        return false;
-    }
     std::vector<std::string> parsed;
-    const bool valid = tt::json::Reader(container).readStringArray(key, parsed);
-    cJSON_Delete(root);
-    if (!valid) {
+    const std::string needle = std::string("\"") + key + "\"";
+    size_t pos = json.find(needle);
+    if (pos == std::string::npos ||
+        (pos = json.find(':', pos + needle.size())) == std::string::npos) {
         return false;
     }
-    out.swap(parsed);
-    return true;
+    do { ++pos; } while (pos < json.size() &&
+        std::isspace(static_cast<unsigned char>(json[pos])));
+    if (pos >= json.size() || json[pos++] != '[') return false;
+    for (;;) {
+        while (pos < json.size() &&
+               std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+        if (pos >= json.size()) return false;
+        if (json[pos] == ']') {
+            out.swap(parsed);
+            return true;
+        }
+        if (parsed.size() >= MAX_VALUES) return false;
+        parsed.emplace_back();
+        if (!parseJsonString(json, pos, parsed.back())) return false;
+        while (pos < json.size() &&
+               std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+        if (pos >= json.size()) return false;
+        if (json[pos] == ']') {
+            out.swap(parsed);
+            return true;
+        }
+        if (json[pos++] != ',') return false;
+        while (pos < json.size() &&
+               std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
+        if (pos >= json.size() || json[pos] == ']') return false;
+    }
 }
 
 bool jsonExtractBool(const std::string& json, const char* key, bool& out) {
