@@ -85,7 +85,7 @@ static error_t start(Device* device) {
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = pin_or_unused(cs_pin),
         .dc_gpio_num = pin_or_unused(config->pin_dc),
-        .spi_mode = 0,
+        .spi_mode = config->spi_mode,
         .pclk_hz = config->pixel_clock_hz,
         .trans_queue_depth = config->transaction_queue_depth,
         .on_color_trans_done = on_color_trans_done,
