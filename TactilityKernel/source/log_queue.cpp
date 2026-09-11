@@ -37,11 +37,16 @@ void write_real(const char* data, size_t length) {
     if (length == 0) {
         return;
     }
-#if defined(ESP_PLATFORM)
-    constexpr int fd = 1; // ESP-IDF's default console fd
-#else
-    constexpr int fd = 2; // matches log_generic()'s stderr choice
-#endif
+    // fd 2 on both platforms: matches log_generic()'s stderr choice, and on ESP-IDF it's the
+    // lowest fd that is always the composite console itself. The composite console VFS
+    // (esp_vfs_console/vfs_console.c) opens its underlying primary (e.g. /dev/uart/0) and, if a
+    // secondary is configured (ESP-IDF's Kconfig default on chips with USB-Serial-JTAG: the
+    // secondary port device), as the two lowest real fds during startup - so on those boards
+    // fd 1 is the secondary port device, not the console, and writes to it can fail silently
+    // (observed: -1 with errno unchanged) when that port isn't connected. Writing to fd 2
+    // instead reaches /dev/console in either configuration, whose write fans out to every
+    // enabled output port.
+    constexpr int fd = 2;
     ::write(fd, data, length);
 }
 
