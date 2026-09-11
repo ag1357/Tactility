@@ -23,6 +23,7 @@ struct St7796Config {
     bool bgr_order;
     uint32_t bits_per_pixel;
     uint32_t pixel_clock_hz;
+    uint8_t spi_mode;
     uint8_t transaction_queue_depth;
     // Gamma curve preset index [0,3], sent via the MIPI DCS GAMSET (0x26) command at bring-up.
     uint8_t gamma_curve;
