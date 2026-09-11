@@ -1,0 +1,8 @@
+dependencies:
+  - Platforms/platform-esp32
+  - Drivers/audio-stream-module
+  - Drivers/axp2101-module
+  - Drivers/es8311-module
+  - Drivers/ft6x36-module
+  - Drivers/st7796-module
+dts: waveshare,esp32-p4-wifi6-touch-lcd-35.dts
