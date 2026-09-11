@@ -42,7 +42,7 @@ dependencies:
   espressif/esp_lcd_st7796:
     version: "1.3.4"
     rules:
-      - if: "target in [esp32, esp32s3]"
+      - if: "target in [esp32, esp32s3, esp32p4]"
   espressif/esp_lcd_gc9a01: "2.0.3"
   espressif/esp_lcd_jd9165:
     version: "1.0.3"
