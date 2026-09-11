@@ -161,6 +161,18 @@ static error_t start(Device* device) {
         return ERROR_RESOURCE;
     }
 
+    // esp_lcd_touch_ft6336u's init writes its own default (128) to the THGROUP touch
+    // detection threshold register, overwriting the controller's factory-stored value. Boards
+    // that know their factory value (e.g. Waveshare panels ship 25) restore it via the
+    // touch-threshold binding; 128 needs much firmer presses than the panel was tuned for.
+    if (config->touch_threshold != 0) {
+        constexpr uint8_t FT6X36_REG_THGROUP = 0x80;
+        uint8_t threshold = config->touch_threshold;
+        if (esp_lcd_panel_io_tx_param(internal->io_handle, FT6X36_REG_THGROUP, &threshold, 1) != ESP_OK) {
+            LOG_W(TAG, "Failed to write touch threshold %u", (unsigned)threshold);
+        }
+    }
+
     device_set_driver_data(device, internal);
     return ERROR_NONE;
 }
