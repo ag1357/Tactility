@@ -69,84 +69,8 @@ static void usb_hid_keyboard_device_destruct(UsbHidContext* ctx);
 static void usb_hid_keyboard_publish_key(UsbHidContext* ctx, uint32_t lv_key, bool pressed, bool ctrl, bool alt, uint8_t hid_keycode, uint8_t hid_modifier);
 }
 
-static const uint8_t keycode2ascii[57][2] = {
-    {0, 0}, {0, 0}, {0, 0}, {0, 0},
-    {'a', 'A'}, {'b', 'B'}, {'c', 'C'}, {'d', 'D'}, {'e', 'E'},
-    {'f', 'F'}, {'g', 'G'}, {'h', 'H'}, {'i', 'I'}, {'j', 'J'},
-    {'k', 'K'}, {'l', 'L'}, {'m', 'M'}, {'n', 'N'}, {'o', 'O'},
-    {'p', 'P'}, {'q', 'Q'}, {'r', 'R'}, {'s', 'S'}, {'t', 'T'},
-    {'u', 'U'}, {'v', 'V'}, {'w', 'W'}, {'x', 'X'}, {'y', 'Y'},
-    {'z', 'Z'},
-    {'1', '!'}, {'2', '@'}, {'3', '#'}, {'4', '$'}, {'5', '%'},
-    {'6', '^'}, {'7', '&'}, {'8', '*'}, {'9', '('}, {'0', ')'},
-    {'\r', '\r'}, {0, 0}, {'\b', 0}, {'\t', '\t'}, {' ', ' '},
-    {'-', '_'}, {'=', '+'}, {'[', '{'}, {']', '}'},
-    {'\\', '|'}, {'\\', '|'}, {';', ':'}, {'\'', '"'},
-    {'`', '~'}, {',', '<'}, {'.', '>'}, {'/', '?'},
-};
-
-// Every key returns a real Unicode codepoint per KeyboardKeyData::key's contract - never an
-// LV_KEY_* (or USB_HID_KEY_*, which mirrors it) constant. Keys with no ordinary character of
-// their own use the CodePoint enum's standard Unicode symbol for the concept. lvgl-module's
-// keyboard.cpp translates all of these back to LVGL's own sentinels (CODEPOINT_ESCAPE/BACKSPACE/
-// DELETE already equal their LV_KEY_* counterpart numerically, so no translation is needed for
-// those).
-static uint32_t hid_keycode_to_key(uint8_t modifier, uint8_t key_code,
-                                       bool caps_lock, bool num_lock) {
-    bool shift = (modifier & HID_LEFT_SHIFT) || (modifier & HID_RIGHT_SHIFT);
-    bool ctrl  = (modifier & HID_LEFT_CONTROL) || (modifier & HID_RIGHT_CONTROL);
-    bool alt   = (modifier & HID_LEFT_ALT) || (modifier & HID_RIGHT_ALT);
-
-    switch (key_code) {
-        case HID_KEY_ENTER:         return CODEPOINT_ENTER;
-        case HID_KEY_ESC:           return CODEPOINT_ESCAPE;
-        case HID_KEY_DEL:           return CODEPOINT_BACKSPACE;
-        case HID_KEY_DELETE:        return CODEPOINT_DELETE;
-        case HID_KEY_TAB:           return '\t';
-        case HID_KEY_UP:            return CODEPOINT_ARROW_UP;
-        case HID_KEY_DOWN:          return CODEPOINT_ARROW_DOWN;
-        case HID_KEY_LEFT:          return CODEPOINT_ARROW_LEFT;
-        case HID_KEY_RIGHT:         return CODEPOINT_ARROW_RIGHT;
-        case HID_KEY_HOME:          return CODEPOINT_HOME;
-        case HID_KEY_END:           return CODEPOINT_END;
-        case HID_KEY_KEYPAD_ENTER:  return CODEPOINT_ENTER;
-        case HID_KEY_KEYPAD_ADD:    return '+';
-        case HID_KEY_KEYPAD_SUB:    return '-';
-        case HID_KEY_KEYPAD_MUL:    return '*';
-        case HID_KEY_KEYPAD_DIV:    return '/';
-        case HID_KEY_KEYPAD_0:      return num_lock ? (uint32_t)'0' : 0u;
-        case HID_KEY_KEYPAD_1:      return num_lock ? (uint32_t)'1' : (uint32_t)CODEPOINT_END;
-        case HID_KEY_KEYPAD_2:      return num_lock ? (uint32_t)'2' : (uint32_t)CODEPOINT_ARROW_DOWN;
-        case HID_KEY_KEYPAD_3:      return num_lock ? (uint32_t)'3' : 0u;
-        case HID_KEY_KEYPAD_4:      return num_lock ? (uint32_t)'4' : (uint32_t)CODEPOINT_ARROW_LEFT;
-        case HID_KEY_KEYPAD_5:      return num_lock ? (uint32_t)'5' : 0u;
-        case HID_KEY_KEYPAD_6:      return num_lock ? (uint32_t)'6' : (uint32_t)CODEPOINT_ARROW_RIGHT;
-        case HID_KEY_KEYPAD_7:      return num_lock ? (uint32_t)'7' : (uint32_t)CODEPOINT_HOME;
-        case HID_KEY_KEYPAD_8:      return num_lock ? (uint32_t)'8' : (uint32_t)CODEPOINT_ARROW_UP;
-        case HID_KEY_KEYPAD_9:      return num_lock ? (uint32_t)'9' : 0u;
-        case HID_KEY_KEYPAD_DELETE: return num_lock ? (uint32_t)'.' : (uint32_t)CODEPOINT_DELETE;
-        default: break;
-    }
-
-    /*
-     * Ctrl and Alt no longer suppress the key.
-     *
-     * They used to return 0 here, which meant a chord like Ctrl+C produced nothing at all and a
-     * terminal application could never see it. The modifiers are now reported alongside the key in
-     * UsbHidEvent instead, so the plain character still comes through and a consumer that wants a
-     * control code derives it. Alt is passed through on the same basis.
-     */
-    (void)ctrl;
-    (void)alt;
-
-    if (key_code < (sizeof(keycode2ascii) / sizeof(keycode2ascii[0]))) {
-        bool is_letter = (key_code >= 0x04 && key_code <= 0x1D);
-        bool effective_shift = is_letter ? (shift ^ caps_lock) : shift;
-        uint8_t ch = keycode2ascii[key_code][effective_shift ? 1 : 0];
-        if (ch != 0) return (uint32_t)ch;
-    }
-    return 0;
-}
+// HID usage code -> Unicode codepoint mapping is shared with other HID transports (e.g. the
+// BLE HID host) in TactilityKernel's keyboard driver: keyboard_key_from_hid_usage().
 
 static void publish_event(UsbHidContext* ctx, const UsbHidEvent* evt) {
     if (xSemaphoreTake(ctx->sub_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
@@ -237,8 +161,8 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
                             publish_scroll(ctx, is_pgup ? -8 : 8);
                             continue;
                         }
-                        uint32_t lv_key = hid_keycode_to_key(kb->modifier.val, hid_code,
-                                                                  ctx->caps_lock_active, ctx->num_lock_active);
+                        uint32_t lv_key = keyboard_key_from_hid_usage(kb->modifier.val, hid_code,
+                                                                      ctx->caps_lock_active, ctx->num_lock_active);
                         if (lv_key) {
                             usb_hid_keyboard_publish_key(ctx, lv_key, true, with_ctrl, with_alt, hid_code, kb->modifier.val);
                             ctx->pressed_lv_keys[hid_code] = lv_key;
