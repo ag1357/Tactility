@@ -392,8 +392,34 @@ error_t axp2101_power_off(Device* device) {
 
 // region Power supply child device
 
+// Piecewise Li-ion/LiPo discharge curve: (mV, %) breakpoints, linear between neighbors.
+// Statusbar only reads CAPACITY, so this gives a battery-icon reading without a fuel gauge IC.
+static int estimate_capacity_from_mv(int millivolts) {
+    struct Point { int mv; int pct; };
+    static constexpr Point CURVE[] = {
+        { 3000,   0 },
+        { 3400,  20 },
+        { 3700,  50 },
+        { 3850,  80 },
+        { 4100, 100 },
+    };
+    constexpr size_t N = sizeof(CURVE) / sizeof(CURVE[0]);
+    if (millivolts <= CURVE[0].mv) return 0;
+    if (millivolts >= CURVE[N - 1].mv) return 100;
+    for (size_t i = 1; i < N; ++i) {
+        if (millivolts <= CURVE[i].mv) {
+            const Point& lo = CURVE[i - 1];
+            const Point& hi = CURVE[i];
+            return lo.pct + (millivolts - lo.mv) * (hi.pct - lo.pct) / (hi.mv - lo.mv);
+        }
+    }
+    return 100;
+}
+
 static bool ps_supports_property(Device*, PowerSupplyProperty property) {
-    return property == POWER_SUPPLY_PROP_IS_CHARGING || property == POWER_SUPPLY_PROP_VOLTAGE;
+    return property == POWER_SUPPLY_PROP_IS_CHARGING
+        || property == POWER_SUPPLY_PROP_VOLTAGE
+        || property == POWER_SUPPLY_PROP_CAPACITY;
 }
 
 static error_t ps_get_property(Device* device, PowerSupplyProperty property, PowerSupplyPropertyValue* out_value) {
@@ -417,6 +443,26 @@ static error_t ps_get_property(Device* device, PowerSupplyProperty property, Pow
                 return err;
             }
             out_value->int_value = millivolts;
+            return ERROR_NONE;
+        }
+        case POWER_SUPPLY_PROP_CAPACITY: {
+            // Battery must actually be connected for the ADC reading to be meaningful;
+            // reporting 0% for a disconnected battery is more honest than showing a wild
+            // percentage derived from a floating VBAT rail.
+            bool connected;
+            error_t err = axp2101_is_battery_connected(axp2101_device, &connected);
+            if (err != ERROR_NONE) {
+                return err;
+            }
+            if (!connected) {
+                return ERROR_NOT_FOUND;
+            }
+            uint16_t millivolts;
+            err = axp2101_get_battery_voltage(axp2101_device, &millivolts);
+            if (err != ERROR_NONE) {
+                return err;
+            }
+            out_value->int_value = estimate_capacity_from_mv(millivolts);
             return ERROR_NONE;
         }
         default:
