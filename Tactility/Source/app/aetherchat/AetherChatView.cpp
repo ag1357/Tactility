@@ -109,12 +109,10 @@ void AetherChatView::init(lv_obj_t* parent) {
     status = lv_label_create(parent);
     lv_label_set_text(status, "Connecting...");
 
-    auto* row = lv_obj_create(parent);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-
-    input = lv_textarea_create(row);
-    lv_obj_set_flex_grow(input, 1);
+    // Message preview/input spans the full display width and sits
+    // directly above the action buttons.
+    input = lv_textarea_create(parent);
+    lv_obj_set_width(input, LV_PCT(100));
     lv_textarea_set_one_line(input, true);
     // Protocol v2 bounds user text at MAX_USER_TEXT_BYTES; the TCP link
     // carries any allowed message in a single frame (no fragmentation).
@@ -122,15 +120,21 @@ void AetherChatView::init(lv_obj_t* parent) {
     lv_textarea_set_placeholder_text(input, "Ask AetherCore...");
     lv_obj_add_event_cb(input, onInputFocus, LV_EVENT_FOCUSED, this);
 
+    auto* row = lv_obj_create(parent);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+
     for (const auto& button : {
              std::pair<const char*, lv_event_cb_t>{"Send", onSend},
              {"Cancel", onCancel},
              {"Reset", onReset},
          }) {
         auto* object = lv_button_create(row);
+        lv_obj_set_flex_grow(object, 1);
         lv_obj_add_event_cb(object, button.second, LV_EVENT_CLICKED, this);
         auto* label = lv_label_create(object);
         lv_label_set_text(label, button.first);
+        lv_obj_center(label);
     }
 }
 
