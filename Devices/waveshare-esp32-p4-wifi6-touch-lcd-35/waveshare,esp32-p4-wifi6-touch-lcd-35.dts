@@ -85,6 +85,11 @@
 			reg = <0x38>;
 			x-max = <320>;
 			y-max = <480>;
+			// Factory-stored touch detection threshold. The esp_lcd_touch_ft6336u
+			// component's init overwrites it with its own default (128), which needs
+			// much firmer presses than the panel is tuned for; 25 restores factory
+			// touch sensitivity.
+			touch-threshold = <25>;
 			pin-reset = <&gpio0 29 GPIO_FLAG_NONE>;
 			pin-interrupt = <&gpio0 50 GPIO_FLAG_NONE>;
 		};
