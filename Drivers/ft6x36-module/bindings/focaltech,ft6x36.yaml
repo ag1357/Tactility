@@ -35,3 +35,7 @@ properties:
     type: phandles
     default: GPIO_PIN_SPEC_NONE
     description: Interrupt GPIO pin
+  touch-threshold:
+    type: int
+    default: 0
+    description: Touch detection threshold written to the controller's THGROUP register (0x80) after init. 0 keeps the esp_lcd_touch_ft6336u component default, which overwrites the controller's factory-stored value at init

@@ -21,6 +21,10 @@ struct Ft6x36Config {
     bool mirror_y;
     struct GpioPinSpec pin_reset;
     struct GpioPinSpec pin_interrupt;
+    // Touch detection threshold (THGROUP register 0x80). 0 = keep the esp_lcd_touch_ft6336u
+    // component default; a nonzero value is written after init because the component's init
+    // overwrites the controller's factory-stored threshold with its own default.
+    uint8_t touch_threshold;
 };
 
 #ifdef __cplusplus
