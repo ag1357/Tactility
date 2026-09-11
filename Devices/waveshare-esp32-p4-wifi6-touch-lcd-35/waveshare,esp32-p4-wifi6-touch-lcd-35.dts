@@ -8,6 +8,7 @@
 #include <tactility/bindings/esp32_pwm_ledc.h>
 #include <tactility/bindings/esp32_sdmmc.h>
 #include <tactility/bindings/esp32_spi.h>
+#include <tactility/bindings/esp32_uart.h>
 #include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_wifi.h>
 #include <tactility/bindings/gpio_hog.h>
@@ -160,5 +161,25 @@
 	usbhost0 {
 		compatible = "espressif,esp32-usbhost";
 		peripheral-map = <0>;
+
+		// Device B (AetherCore compute accessory) attaches through a powered hub
+		// and enumerates as a TinyUSB CDC-ACM device (0x303A:0x4001); vid/pid are
+		// discovery hints only - AetherLink protocol-v2 CAPABILITIES negotiation
+		// is authoritative for accessory identity.
+		usb_accessory: usb-accessory {
+			compatible = "espressif,esp32-usbhost-cdc";
+			vid = <0x303A>;
+			pid = <0x4001>;
+		};
+	};
+
+	// AetherLink UART fallback to Device C: GPIO2 TX / GPIO3 RX, 921600 8N1.
+	// Carries the same u32be + bounded-JSON protocol-v2 stream as USB.
+	// GPIO2/GPIO3 are unassigned elsewhere in this devicetree (I2C is 7/8).
+	uart_accessory: uart-accessory {
+		compatible = "espressif,esp32-uart";
+		port = <UART_NUM_1>;
+		pin-tx = <&gpio0 2 GPIO_FLAG_NONE>;
+		pin-rx = <&gpio0 3 GPIO_FLAG_NONE>;
 	};
 };
