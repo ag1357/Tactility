@@ -155,6 +155,9 @@ namespace service {
 // is the new, global ::AppManifest, not this namespace's old tt::app::AppManifest.
 namespace app {
     namespace addgps { extern const ::AppManifest manifest; }
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
+    namespace aetherchat { extern const ::AppManifest manifest; }
+#endif
     namespace alertdialog { extern const ::AppManifest manifest; }
     namespace apphub { extern const ::AppManifest manifest; }
     namespace apphubdetails { extern const ::AppManifest manifest; }
@@ -281,6 +284,7 @@ static void registerInternalApps() {
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
     app_manager_add(&app::chat::manifest);
+    app_manager_add(&app::aetherchat::manifest);
 #endif
 
     if (device_exists_of_type(&GROVE_TYPE)) {
