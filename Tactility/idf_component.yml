@@ -1,6 +1,5 @@
 dependencies:
   espressif/esp_codec_dev: "1.5.10"
-  # MP3 decode for the Audio Player app (esp_audio_simple_dec)
   espressif/esp_audio_codec: "2.4.0"
   espressif/esp_video:
     version: "2.2.0"
@@ -86,6 +85,11 @@ dependencies:
       - if: "target in [esp32s3]"
   espressif/usb_host_hid:
     version: "1.1.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  # CDC-ACM host class client: AetherLink USB accessory transport (Device A).
+  espressif/usb_host_cdc_acm:
+    version: "~2.1.0"
     rules:
       - if: "target in [esp32s3, esp32p4]"
   espressif/usb_host_msc:

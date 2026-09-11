@@ -136,6 +136,14 @@ namespace service {
     namespace screenshot { extern const ServiceManifest manifest; }
 #endif
     namespace webserver { extern const ServiceManifest manifest; }
+#ifdef ESP_PLATFORM
+    // AetherLink accessory backends (Device-B compute accessory link). Only one backend
+    // may own AccessoryLinkService's single platform slot; see registerAndStartServices().
+    namespace accessorylink {
+        extern const ServiceManifest uartManifest;
+        extern const ServiceManifest usbCdcManifest;
+    }
+#endif
 
 }
 
@@ -327,6 +335,19 @@ static void registerAndStartServices() {
 #if defined(ESP_PLATFORM)
     if (device_exists_of_type(&RTC_TYPE)) {
         addService(service::rtctime::manifest);
+    }
+#endif
+#if defined(ESP_PLATFORM)
+    // AetherLink accessory backends (Device-B compute accessory link).
+    // Production transport is USB CDC-ACM through the devicetree
+    // "usb-accessory" node; the GPIO2/GPIO3 UART backend remains the
+    // universal fallback when the board has no such node. Only one backend
+    // may own AccessoryLinkService's single platform slot.
+    Device* usbAccessory = nullptr;
+    if (device_get_by_name("usb-accessory", &usbAccessory) == ERROR_NONE && usbAccessory != nullptr) {
+        addService(service::accessorylink::usbCdcManifest);
+    } else {
+        addService(service::accessorylink::uartManifest);
     }
 #endif
 }

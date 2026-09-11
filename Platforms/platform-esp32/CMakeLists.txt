@@ -28,4 +28,4 @@ if (DEFINED ENV{ESP_IDF_VERSION})
     endif ()
 endif ()
 
-idf_component_optional_requires(PRIVATE bt usb espressif__usb_host_hid espressif__usb_host_msc)
+idf_component_optional_requires(PRIVATE bt usb espressif__usb_host_hid espressif__usb_host_msc espressif__usb_host_cdc_acm)

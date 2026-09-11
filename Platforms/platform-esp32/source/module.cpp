@@ -353,6 +353,7 @@ extern Driver esp32_usbhost_hid_driver;
 extern Driver esp32_usbhost_hid_keyboard_driver;
 extern Driver esp32_usbhost_midi_driver;
 extern Driver esp32_usbhost_msc_driver;
+extern Driver esp32_usbhost_cdc_driver;
 #endif
 #if SOC_USB_OTG_SUPPORTED && (CONFIG_TINYUSB_HID_COUNT || CONFIG_TINYUSB_MSC_ENABLED || CONFIG_TINYUSB_MIDI_COUNT || CONFIG_TINYUSB_CDC_ENABLED)
 extern Driver esp32_usb_device_controller_driver;
@@ -403,6 +404,7 @@ static Driver* const platform_esp32_drivers[] = {
     &esp32_usbhost_hid_keyboard_driver,
     &esp32_usbhost_midi_driver,
     &esp32_usbhost_msc_driver,
+    &esp32_usbhost_cdc_driver,
 #endif
 #if SOC_USB_OTG_SUPPORTED && (CONFIG_TINYUSB_HID_COUNT || CONFIG_TINYUSB_MSC_ENABLED || CONFIG_TINYUSB_MIDI_COUNT || CONFIG_TINYUSB_CDC_ENABLED)
     &esp32_usb_device_controller_driver,
