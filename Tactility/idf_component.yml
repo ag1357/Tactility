@@ -1,5 +1,7 @@
 dependencies:
   espressif/esp_codec_dev: "1.5.10"
+  # MP3 decode for the Audio Player app (esp_audio_simple_dec)
+  espressif/esp_audio_codec: "2.4.0"
   espressif/esp_video:
     version: "2.2.0"
     rules:
