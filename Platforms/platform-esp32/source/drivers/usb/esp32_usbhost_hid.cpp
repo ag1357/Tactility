@@ -3,6 +3,7 @@
 
 #include <tactility/device.h>
 #include <tactility/driver.h>
+#include <tactility/drivers/hid_consumer.h>
 #include <tactility/drivers/keyboard.h>
 #include <tactility/drivers/usb_host_hid.h>
 #include <tactility/log.h>
@@ -53,6 +54,14 @@ struct UsbHidContext {
     std::atomic<hid_host_device_handle_t> kb_handle{nullptr};
     std::atomic<bool> kb_led_pending{false};
 
+    // Consumer Control interface (e.g. headset buttons, media keyboards): non-boot HID
+    // interfaces whose report descriptor maps to a Consumer-page button bitmap via the
+    // kernel's generic hid_consumer parser. One consumer interface at a time.
+    HidConsumerMap consumer_map = {};
+    std::atomic<hid_host_device_handle_t> consumer_handle{nullptr};
+    uint16_t consumer_prev_usages[HID_CONSUMER_MAX_USAGES] = {};
+    size_t consumer_prev_count = 0;
+
     QueueHandle_t    subscribers[MAX_SUBSCRIBERS] = {};
     SemaphoreHandle_t sub_mutex                   = nullptr;
 
@@ -77,7 +86,8 @@ static void publish_event(UsbHidContext* ctx, const UsbHidEvent* evt) {
         LOG_W(TAG, "publish_event: sub_mutex contended, event type=%d dropped", (int)evt->type);
         return;
     }
-    bool is_release = (evt->type == USB_HID_EVENT_KEY && !evt->key.pressed);
+    bool is_release = (evt->type == USB_HID_EVENT_KEY && !evt->key.pressed)
+        || (evt->type == USB_HID_EVENT_CONSUMER && !evt->consumer.pressed);
     TickType_t send_timeout = is_release ? pdMS_TO_TICKS(10) : 0;
     for (int i = 0; i < MAX_SUBSCRIBERS; i++) {
         if (ctx->subscribers[i]) {
@@ -201,6 +211,41 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
                     publish_scroll(ctx, delta);
                 }
             }
+        } else if (ctx->consumer_handle.load() == handle) {
+            // Consumer Control bitmap: guard the report ID here so hid_consumer_decode_report's
+            // zero result always means "nothing pressed" (releases), never "not our report".
+            if (ctx->consumer_map.has_report_id
+                && (data_len < 1 || data[0] != ctx->consumer_map.report_id)) {
+                break;
+            }
+            uint16_t usages[HID_CONSUMER_MAX_USAGES];
+            size_t count = hid_consumer_decode_report(&ctx->consumer_map, data, data_len,
+                                                      usages, HID_CONSUMER_MAX_USAGES);
+            // Publish transitions against the previously pressed set.
+            for (size_t i = 0; i < count; i++) {
+                bool was_pressed = false;
+                for (size_t j = 0; j < ctx->consumer_prev_count; j++) {
+                    if (ctx->consumer_prev_usages[j] == usages[i]) { was_pressed = true; break; }
+                }
+                if (!was_pressed) {
+                    UsbHidEvent evt = { .type = USB_HID_EVENT_CONSUMER,
+                                        .consumer = { usages[i], true } };
+                    publish_event(ctx, &evt);
+                }
+            }
+            for (size_t j = 0; j < ctx->consumer_prev_count; j++) {
+                bool still_pressed = false;
+                for (size_t i = 0; i < count; i++) {
+                    if (usages[i] == ctx->consumer_prev_usages[j]) { still_pressed = true; break; }
+                }
+                if (!still_pressed) {
+                    UsbHidEvent evt = { .type = USB_HID_EVENT_CONSUMER,
+                                        .consumer = { ctx->consumer_prev_usages[j], false } };
+                    publish_event(ctx, &evt);
+                }
+            }
+            memcpy(ctx->consumer_prev_usages, usages, count * sizeof(uint16_t));
+            ctx->consumer_prev_count = count;
         }
         break;
 
@@ -213,12 +258,16 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
             usb_hid_keyboard_device_destruct(ctx);
         } else if (params.proto == HID_PROTOCOL_MOUSE) {
             ctx->mouse_connected = false;
+        } else if (ctx->consumer_handle.load() == handle) {
+            ctx->consumer_handle.store(nullptr);
+            ctx->consumer_prev_count = 0;
         }
         hid_host_device_close(handle);
-        if (!ctx->kb_handle.load() && !ctx->mouse_connected) {
+        if (!ctx->kb_handle.load() && !ctx->mouse_connected
+            && ctx->consumer_handle.load() == nullptr) {
             ctx->device_connected = false;
         }
-        {
+        if (params.proto == HID_PROTOCOL_KEYBOARD || params.proto == HID_PROTOCOL_MOUSE) {
             UsbHidEventType disc_type = (params.proto == HID_PROTOCOL_KEYBOARD)
                 ? USB_HID_EVENT_KEYBOARD_DISCONNECTED
                 : USB_HID_EVENT_MOUSE_DISCONNECTED;
@@ -267,7 +316,40 @@ static void hid_proc_task(void* arg) {
             if (hid_host_device_get_params(dev_evt.handle, &params) != ESP_OK) continue;
 
             if (params.proto != HID_PROTOCOL_KEYBOARD && params.proto != HID_PROTOCOL_MOUSE) {
-                LOG_D(TAG, "ignoring HID interface with unhandled proto=%d", params.proto);
+                // Non-boot HID interface. Standard Consumer Control (headset buttons, media
+                // keyboards) declares subclass/protocol 0 and lands here. The interface must
+                // be opened before its report descriptor can be requested ("Interface is not
+                // ready" otherwise), so: open, parse, and close again when the descriptor
+                // turns out not to be a Consumer-page button bitmap.
+                const hid_host_device_config_t probe_cfg = {
+                    .callback = hid_interface_callback,
+                    .callback_arg = ctx,
+                };
+                if (hid_host_device_open(dev_evt.handle, &probe_cfg) != ESP_OK) {
+                    LOG_W(TAG, "hid_host_device_open failed for non-boot interface");
+                    continue;
+                }
+                size_t desc_len = 0;
+                const uint8_t* desc = hid_host_get_report_descriptor(dev_evt.handle, &desc_len);
+                HidConsumerMap map = {};
+                if (desc == nullptr || !hid_consumer_parse_descriptor(desc, desc_len, &map)) {
+                    hid_host_device_close(dev_evt.handle);
+                    LOG_D(TAG, "ignoring HID interface with unhandled proto=%d", params.proto);
+                    continue;
+                }
+                if (ctx->consumer_handle.load() != nullptr) {
+                    hid_host_device_close(dev_evt.handle);
+                    LOG_W(TAG, "a Consumer Control interface is already connected; ignoring another");
+                    continue;
+                }
+                LOG_I(TAG, "HID Consumer Control connected (%d usages)", (int) map.usage_count);
+
+                // No boot-protocol switch: consumer devices only implement report protocol.
+                ctx->consumer_map = map;
+                ctx->consumer_prev_count = 0;
+                ctx->consumer_handle.store(dev_evt.handle);
+                ctx->device_connected = true;
+                hid_host_device_start(dev_evt.handle);
                 continue;
             }
             LOG_I(TAG, "HID device connected (proto=%d)", params.proto);
