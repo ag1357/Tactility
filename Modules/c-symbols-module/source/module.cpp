@@ -11,6 +11,27 @@
 #include <ctype.h>
 #include <locale.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_log.h>
+
+// libgcc helper functions (no public headers; declared like the elf_loader's
+// libc symbol table declares its own). The __atomic_* names are GCC builtins,
+// so their declarators are parenthesized to suppress the builtin meaning and
+// export the libgcc library function instead.
+extern "C" {
+int __clzsi2(unsigned int);
+int64_t __divdi3(int64_t, int64_t);
+int64_t __moddi3(int64_t, int64_t);
+int64_t __fixdfdi(double);
+double __floatdidf(int64_t);
+double __floatsidf(int);
+unsigned long long (__atomic_load_8)(const volatile void*, int);
+void (__atomic_store_8)(volatile void*, unsigned long long, int);
+unsigned long long (__atomic_exchange_8)(volatile void*, unsigned long long, int);
+}
+
+#endif
+
 extern "C" {
 
 static const ModuleSymbol SYMBOLS[] = {
@@ -188,6 +209,24 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(cJSON_IsNumber),
     DEFINE_MODULE_SYMBOL(cJSON_IsString),
     DEFINE_MODULE_SYMBOL(cJSON_IsTrue),
+#ifdef ESP_PLATFORM
+    // esp_log.h - SDK-built app code (e.g. lvgl's log hooks) calls IDF logging
+    DEFINE_MODULE_SYMBOL_SIGNATURE(esp_log, void (*)(esp_log_config_t, const char*, const char*, ...)),
+    DEFINE_MODULE_SYMBOL(esp_log_timestamp),
+    // libgcc helpers the RV32 toolchain emits for 64-bit arithmetic and
+    // std::atomic<int64_t>; present in the firmware's libgcc link.
+    DEFINE_MODULE_SYMBOL(__clzsi2),
+    DEFINE_MODULE_SYMBOL(__divdi3),
+    DEFINE_MODULE_SYMBOL(__moddi3),
+    DEFINE_MODULE_SYMBOL(__fixdfdi),
+    DEFINE_MODULE_SYMBOL(__floatdidf),
+    DEFINE_MODULE_SYMBOL(__floatsidf),
+    // Aliased: the plain macro stringifies its token, which the parenthesized
+    // builtin-suppressing declarator would carry into the name.
+    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_load_8", (__atomic_load_8)),
+    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_store_8", (__atomic_store_8)),
+    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_exchange_8", (__atomic_exchange_8)),
+#endif
     MODULE_SYMBOL_TERMINATOR
 };
 
