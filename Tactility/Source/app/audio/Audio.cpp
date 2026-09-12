@@ -1617,8 +1617,16 @@ void maybeSaveSidecar(Context* self) {
     }
 }
 
+// Defined below; shared by the on-screen button and the media Play/Pause key.
+void handlePlayPauseToggle(Context* self);
+
 void pollTimerCb(lv_timer_t* timer) {
     auto* self = static_cast<Context*>(lv_timer_get_user_data(timer));
+    // Headset/media Play/Pause button: the service latch is set from the HID pump task,
+    // so act on it here (LVGL thread) where the playback toggle is safe to run.
+    if (service::audio::consumePlayPauseRequest()) {
+        handlePlayPauseToggle(self);
+    }
     refreshFromPlaybackState(self);
     // Tick every 500ms; save every ~20 seconds of ticks while playing.
     self->saveCounterTicks++;
@@ -1882,9 +1890,9 @@ void resumePausedPlayback(Context* self) {
 
 // Unified play/pause: playing -> stop stream and pause; paused -> resume
 // from captured position; stopped -> start (with persisted resume if
-// tracking is enabled).
-void onPlayPauseCb(lv_event_t* e) {
-    auto* self = static_cast<Context*>(lv_event_get_user_data(e));
+// tracking is enabled). Shared by the on-screen button and the headset
+// Play/Pause media key (service::audio request latch, polled in pollTimerCb).
+void handlePlayPauseToggle(Context* self) {
     if (self->playback.playing.load() && !self->playback.paused.load()) {
         pausePlayback(self);
     } else if (self->playback.paused.load() && !self->playback.playing.load()) {
@@ -1894,6 +1902,10 @@ void onPlayPauseCb(lv_event_t* e) {
     } else {
         startPlayback(self);
     }
+}
+
+void onPlayPauseCb(lv_event_t* e) {
+    handlePlayPauseToggle(static_cast<Context*>(lv_event_get_user_data(e)));
 }
 
 void trackNext(Context* self) {
@@ -2365,6 +2377,8 @@ void createWidgets(lv_obj_t* parent, void* userData) {
     self->lastPlayPauseWasPause = !(self->playback.playing.load() && !self->playback.paused.load());
 
     refreshFromPlaybackState(self);
+    // A Play/Pause request made while the app was closed must not fire on open.
+    service::audio::clearPlayPauseRequest();
     self->pollTimer = lv_timer_create(&pollTimerCb, 500, self);
 
     // Starts the sidecar worker and playback task on first show. This also
