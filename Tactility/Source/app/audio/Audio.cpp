@@ -2552,8 +2552,11 @@ int32_t appMain(int argc, char* argv[]) {
 } // namespace
 
 extern const ::AppManifest manifest = {
+    // Display name only: the id ("tactility.audio") and the storage APP_ID
+    // ("one.tactility.audio") below are the persistent identity - sidecars,
+    // last-played state, and the library index live under them and must not change.
     .id = "tactility.audio",
-    .name = "Audio Player",
+    .name = "Audiobook Player",
     .category = APP_CATEGORY_USER,
     .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
 };
