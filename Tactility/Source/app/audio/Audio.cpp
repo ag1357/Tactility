@@ -1408,6 +1408,13 @@ struct Context {
     bool lastPlayPauseWasPause = false;  // throttle symbol redraws
     lv_timer_t* pollTimer = nullptr;
 
+    // Volume slider. The slider edits the global output volume -- the same value
+    // the headset buttons change -- so its on-screen position must track external
+    // changes too. lastVolumeUserMs suppresses that sync briefly after a user edit
+    // so an in-progress drag is never fought.
+    lv_obj_t* volumeSliderBox = nullptr;
+    uint32_t lastVolumeUserMs = 0;
+
     uint32_t fileSelectionLaunchId = 0;
     // Result plumbing for the FileSelection child app (picked file path).
     AppStream fileResultStream {};
@@ -1628,6 +1635,16 @@ void pollTimerCb(lv_timer_t* timer) {
         handlePlayPauseToggle(self);
     }
     refreshFromPlaybackState(self);
+    // Track external volume changes (e.g. headset buttons) on the slider.
+    // lvgl_sliderbox_set_value does not fire the value-changed callback, so this
+    // cannot feed back into setOutputVolume; the grace period after a user edit
+    // keeps a drag or rapid +/- taps from being overridden.
+    if (self->volumeSliderBox != nullptr && lv_tick_elaps(self->lastVolumeUserMs) > 1500) {
+        auto globalVolume = static_cast<int32_t>(service::audio::getOutputVolume());
+        if (globalVolume != lvgl_sliderbox_get_value(self->volumeSliderBox)) {
+            lvgl_sliderbox_set_value(self->volumeSliderBox, globalVolume, LV_ANIM_OFF);
+        }
+    }
     // Tick every 500ms; save every ~20 seconds of ticks while playing.
     self->saveCounterTicks++;
     if (self->saveCounterTicks >= 40) {
@@ -2039,9 +2056,11 @@ void onTrackingSwitchCb(lv_event_t* e) {
     setTrackingEnabled(self, lv_obj_has_state(sw, LV_STATE_CHECKED));
 }
 
-// The SliderBox owns its own slider/+/-/value-label, so the volume row needs
-// no widget members here - the event target is the box that changed.
+// The SliderBox owns its own slider/+/-/value-label; the event target is the
+// box that changed, and the user data is the app Context.
 void onVolumeChangedCb(lv_event_t* e) {
+    auto* self = static_cast<Context*>(lv_event_get_user_data(e));
+    self->lastVolumeUserMs = lv_tick_get();
     auto* sliderBox = static_cast<lv_obj_t*>(lv_event_get_target(e));
     service::audio::setOutputVolume(static_cast<float>(lvgl_sliderbox_get_value(sliderBox)));
     if (service::audio::isOutputMuted()) {
@@ -2337,6 +2356,7 @@ void createWidgets(lv_obj_t* parent, void* userData) {
     lv_obj_t* volumeSliderBox = lvgl_sliderbox_create(
         volumeRow, 0, 100, 5, static_cast<int32_t>(service::audio::getOutputVolume()));
     lv_obj_set_flex_grow(volumeSliderBox, 1);
+    self->volumeSliderBox = volumeSliderBox;
     lvgl_sliderbox_add_value_changed_cb(volumeSliderBox, &onVolumeChangedCb, self);
 
     bool trackingOn = false;
@@ -2410,6 +2430,7 @@ void destroyWidgets(void* userData) {
     self->statusLabel = nullptr;
     self->trackingSwitch = nullptr;
     self->editorRow = nullptr;
+    self->volumeSliderBox = nullptr;
 }
 
 // Old onResult(): the FileSelection child app reports back through the
