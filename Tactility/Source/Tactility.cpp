@@ -80,6 +80,9 @@
 #include <tactility/device.h>
 #include <tactility/drivers/audio_stream.h>
 #include <tactility/drivers/display.h>
+
+// Audio service exports to external ELF apps (Source/service/audio/AudioExports.cpp).
+extern "C" Module tactility_audio_module;
 #include <tactility/drivers/grove.h>
 #include <tactility/drivers/power_supply.h>
 #include <tactility/drivers/rtc.h>
@@ -556,6 +559,7 @@ void run(Module* const dtsModules[], const DtsDevice dtsDevices[]) {
 #elif TT_IS_POSIX
     check(module_ensure_started(&app_posix_module) == ERROR_NONE);
 #endif
+    check(module_ensure_started(&tactility_audio_module) == ERROR_NONE);
 
 #ifdef ESP_PLATFORM
     initEsp();

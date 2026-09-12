@@ -59,9 +59,7 @@
 #include <tactility/log.h>
 
 #ifdef ESP_PLATFORM
-#include <esp_audio_dec_default.h>
 #include <esp_audio_simple_dec.h>
-#include <esp_audio_simple_dec_default.h>
 #endif
 
 #include <cJSON.h>
@@ -957,23 +955,8 @@ bool saveLibraryIndex(const std::string& indexPath,
 }
 
 // ---- Decoder registration --------------------------------------------------
-
-std::once_flag g_decoderRegisterOnce;
-
-void ensureDecodersRegistered() {
-#ifdef ESP_PLATFORM
-    std::call_once(g_decoderRegisterOnce, [] {
-        esp_audio_err_t derr = esp_audio_dec_register_default();
-        if (derr != ESP_AUDIO_ERR_OK) {
-            LOG_E(TAG, "esp_audio_dec_register_default failed: %d", (int) derr);
-        }
-        esp_audio_err_t serr = esp_audio_simple_dec_register_default();
-        if (serr != ESP_AUDIO_ERR_OK) {
-            LOG_E(TAG, "esp_audio_simple_dec_register_default failed: %d", (int) serr);
-        }
-    });
-#endif
-}
+// Decoders are registered once at boot by the audio-stream kernel module, so neither
+// this app nor an external ELF app needs to register them.
 
 Device* findAudioStreamDevice() {
     Device* result = nullptr;
@@ -1022,8 +1005,6 @@ PlaybackReason runFileOnce(PlaybackState* state, const std::string& path,
     if (state->seekRequestMs.exchange(-1) >= 0) return PlaybackReason::Seeked;
     return PlaybackReason::Stopped;
 #else
-    ensureDecodersRegistered();
-
     Device* streamDevice = findAudioStreamDevice();
     if (streamDevice == nullptr) {
         LOG_E(TAG, "No audio-stream device found");

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <c_symbols/module.h>
 
+#include <cJSON.h>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -168,6 +169,25 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(toupper),
     // locale.h
     DEFINE_MODULE_SYMBOL(localeconv),
+    // cJSON.h - the firmware already links cJSON, so external apps reuse this copy
+    // instead of embedding their own.
+    DEFINE_MODULE_SYMBOL(cJSON_CreateObject),
+    DEFINE_MODULE_SYMBOL(cJSON_Delete),
+    DEFINE_MODULE_SYMBOL(cJSON_PrintUnformatted),
+    DEFINE_MODULE_SYMBOL(cJSON_Parse),
+    DEFINE_MODULE_SYMBOL(cJSON_AddArrayToObject),
+    DEFINE_MODULE_SYMBOL(cJSON_AddBoolToObject),
+    DEFINE_MODULE_SYMBOL(cJSON_AddNumberToObject),
+    DEFINE_MODULE_SYMBOL(cJSON_AddStringToObject),
+    DEFINE_MODULE_SYMBOL(cJSON_AddItemToArray),
+    DEFINE_MODULE_SYMBOL(cJSON_GetArrayItem),
+    DEFINE_MODULE_SYMBOL(cJSON_GetArraySize),
+    DEFINE_MODULE_SYMBOL(cJSON_GetObjectItem),
+    DEFINE_MODULE_SYMBOL(cJSON_IsArray),
+    DEFINE_MODULE_SYMBOL(cJSON_IsBool),
+    DEFINE_MODULE_SYMBOL(cJSON_IsNumber),
+    DEFINE_MODULE_SYMBOL(cJSON_IsString),
+    DEFINE_MODULE_SYMBOL(cJSON_IsTrue),
     MODULE_SYMBOL_TERMINATOR
 };
 
