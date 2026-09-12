@@ -451,8 +451,11 @@ error_t open_stream(Device* device, const struct AudioStreamConfig* config, Audi
         // A codec device event re-bound this direction to another codec while we were
         // opening this one (e.g. USB headphones attached mid-open). Undo the open instead
         // of committing a handle whose codec no longer matches the slot: the app's retry
-        // picks up the new codec.
-        if (*slot == handle) {
+        // picks up the new codec. The slot still holds our reservation (the handle is only
+        // committed below, and the re-bind listener leaves a reserved slot alone), so that
+        // is what must be released -- checking for `handle` here would strand the
+        // reservation and fail every later open of this direction with ERROR_INVALID_STATE.
+        if (*slot == reservation) {
             *slot = nullptr;
         }
         xSemaphoreGive(data->mutex);
