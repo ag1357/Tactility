@@ -1,7 +1,7 @@
 // AetherCore protocol v2 ESP-NOW wire framing ("AC20").
 //
-// Single source of truth for the Device A <-> Device B transport framing.
-// Device B side: espnow-bridge-c6 firmware (C6) + p4_aethercore (P4) share these
+// Single source of truth for the Device A <-> Device C transport framing.
+// Device C side: espnow-bridge-c6 firmware (C6) + p4_aethercore (P4) share these
 // exact constants. Keep in sync by hand.
 //
 // Frame layout (all multi-byte fields little-endian on the wire):

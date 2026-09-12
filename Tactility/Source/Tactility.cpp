@@ -137,7 +137,7 @@ namespace service {
 #endif
     namespace webserver { extern const ServiceManifest manifest; }
 #ifdef ESP_PLATFORM
-    // AetherLink accessory backends (Device-B compute accessory link). Only one backend
+    // AetherLink accessory backends (Device-C compute accessory link). Only one backend
     // may own AccessoryLinkService's single platform slot; see registerAndStartServices().
     namespace accessorylink {
         extern const ServiceManifest uartManifest;
@@ -342,7 +342,7 @@ static void registerAndStartServices() {
     }
 #endif
 #if defined(ESP_PLATFORM)
-    // AetherLink accessory backends (Device-B compute accessory link).
+    // AetherLink accessory backends (Device-C compute accessory link).
     // Production transport is USB CDC-ACM through the devicetree
     // "usb-accessory" node; the GPIO2/GPIO3 UART backend remains the
     // universal fallback when the board has no such node. Only one backend

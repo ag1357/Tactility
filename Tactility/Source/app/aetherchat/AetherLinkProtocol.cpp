@@ -10,9 +10,9 @@ namespace tt::app::aetherchat {
 namespace {
 
 // Wire type names are the UPPERCASE MessageType enum values, matching the
-// Python protocol.py StrEnum and Device B's native codec (kTypeNames in
+// Python protocol.py StrEnum and Device C's native codec (kTypeNames in
 // firmware/p4_aethercore/main/protocol/protocol_v2.cpp) exactly. The strict
-// Device B decoder rejects any other spelling as UNKNOWN_TYPE.
+// Device C decoder rejects any other spelling as UNKNOWN_TYPE.
 const char* typeToJsonName(MessageType type) {
     switch (type) {
         case MessageType::SessionOpen: return "SESSION_OPEN";

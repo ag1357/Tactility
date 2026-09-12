@@ -3,7 +3,7 @@
 // User types here (Tactility on the Waveshare ESP32-P4-WIFI6-Touch-LCD-3.5);
 // Tactility owns the AccessoryLink/USB-host service and hardware lifetime.
 // AetherChat consumes framed protocol-v2 messages only; cognition, Pack-v2,
-// memory and knowledge remain on the removable Device-B compute accessory.
+// memory and knowledge remain on the removable Device-C compute accessory.
 //
 // See work/v15-p4-deployment/phase-notes/phase-option-a-tcp-spec.md.
 #ifdef ESP_PLATFORM
@@ -64,7 +64,7 @@ void AetherChatApp::onLinkUp() {
     awaitingResponse = false;
     inFlightRequestId = 0;
 
-    // Device B session state is session_id-keyed and survives disconnects:
+    // Device C session state is session_id-keyed and survives disconnects:
     // SESSION_OPEN once per app lifetime, SESSION_RESUME on every later link.
     // Both payloads require client_version (SessionResumePayload in protocol.py).
     const MessageType type = everConnected ? MessageType::SessionResume : MessageType::SessionOpen;
@@ -132,7 +132,7 @@ bool AetherChatApp::sendUserText(const std::string& text) {
 }
 
 void AetherChatApp::sendCancel() {
-    // USER_CANCEL is an ordinary serial query on Device B (Python parity), so
+    // USER_CANCEL is an ordinary serial query on Device C (Python parity), so
     // it obeys the same one-in-flight rule.
     if (awaitingResponse.load()) {
         lvgl_lock();
@@ -185,7 +185,7 @@ void AetherChatApp::handleMessage(const Message& message) {
     // Telemetry + one-in-flight release. Terminal responses per the Option A
     // spec are ASSISTANT_TEXT_DELTA final=true and CLARIFICATION_REQUEST;
     // MEMORY_STATUS terminates memory-intercepted requests and ERROR
-    // terminates failures (Device B emits no delta for those).
+    // terminates failures (Device C emits no delta for those).
     if (inFlightRequestId.load() != 0 && message.requestId == inFlightRequestId.load()) {
         const int64_t now = esp_timer_get_time();
         if (!firstResponseSeen.exchange(true)) {

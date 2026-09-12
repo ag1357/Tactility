@@ -3,7 +3,7 @@
 // Transport history: this shim was built for the AC20 wire framing
 // (protocol_v2_wire.h, fragmentation over 250 B ESP-NOW payloads - see
 // phase-notes/phase12-13-transport-tactility.md). The deployment pivoted to
-// Option A (local IP/TCP toward Device B's softAP, see
+// Option A (local IP/TCP toward Device C's softAP, see
 // phase-notes/phase-option-a-tcp-spec.md): the JSON envelope is now carried
 // as u32be length-prefixed frames by the selected AetherLink transport, and the AC20
 // encode/reassembly helpers below are retained only as the ESP-NOW artifact.
@@ -58,7 +58,7 @@ std::string jsonEscape(const std::string& text);
 
 // Extract the string value of a top-level-or-one-deep field ("key":"value")
 // from a JSON body. Returns false if absent. Minimal, non-validating: the
-// authoritative validation happens on Device B; Device A only renders text.
+// authoritative validation happens on Device C; Device A only renders text.
 bool jsonExtractString(const std::string& json, const char* key, std::string& out);
 
 // Extract a bounded JSON array of string values. Used for clarification

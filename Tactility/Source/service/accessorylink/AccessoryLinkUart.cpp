@@ -10,7 +10,7 @@
 // The pump keeps the negotiation lifecycle alive while no app is subscribed:
 // AccessoryLinkService rejects a silent candidate after its negotiation
 // timeout, so the backend re-registers until AetherChat subscribes and its
-// SESSION_OPEN (sent from onConnected) reaches Device B.
+// SESSION_OPEN (sent from onConnected) reaches Device C.
 #ifdef ESP_PLATFORM
 
 #include <Tactility/service/accessorylink/AccessoryLinkUart.h>
