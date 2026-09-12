@@ -29,3 +29,6 @@ if (DEFINED ENV{ESP_IDF_VERSION})
 endif ()
 
 idf_component_optional_requires(PRIVATE bt usb espressif__usb_host_hid espressif__usb_host_msc espressif__usb_host_cdc_acm)
+if ("${IDF_TARGET}" STREQUAL "esp32s3" OR "${IDF_TARGET}" STREQUAL "esp32p4")
+    idf_component_optional_requires(PRIVATE espressif__usb_host_uac)
+endif ()
