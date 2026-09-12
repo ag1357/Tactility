@@ -10,6 +10,9 @@
 //          Chapter -/+ jumps, +/-30 s skips.
 // Phase 7: live chapter editor -- Edit toggle reveals Mark + -5/-1/+1/+5 s nudge,
 //          chapters re-sorted and renumbered on every edit, saved immediately.
+//          resume sidecar rewritten atomically (temp file + rename); periodic
+//          crash-recovery checkpoint at most every ~180 s of active playback,
+//          forced saves on pause/track-change/hide/close.
 // Phase 8: recursive library index -- worker-thread scan of the picked file's
 //          root, music/audiobook heuristics, durations frozen into
 //          library-index.json (no bulk sidecar writes).
@@ -80,6 +83,7 @@
 #include <string_view>
 #include <cstring>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace tt::app::audio {
@@ -412,14 +416,27 @@ bool saveSidecar(const std::string& sidecarPath, const SidecarData& data) {
     cJSON_Delete(root);
     if (rendered == nullptr) return false;
 
+    // Atomic replace: write a sibling temp file, then rename over the target. A
+    // crash or power loss mid-write then leaves the previous checkpoint intact,
+    // instead of truncating the only copy of the resume position and chapters.
+    std::string tmpPath = sidecarPath + ".tmp";
     bool ok = false;
     {
-        FILE* fp = fopen(sidecarPath.c_str(), "wb");
+        FILE* fp = fopen(tmpPath.c_str(), "wb");
         if (fp != nullptr) {
             size_t len = strlen(rendered);
             ok = (fwrite(rendered, 1, len, fp) == len);
-            fclose(fp);
+            if (fclose(fp) != 0) ok = false;
         }
+    }
+    if (ok && ::rename(tmpPath.c_str(), sidecarPath.c_str()) != 0) {
+        // Filesystems that refuse rename-over-existing: drop the target and retry,
+        // so the worst case degrades to the old truncate-write behavior.
+        ::unlink(sidecarPath.c_str());
+        ok = (::rename(tmpPath.c_str(), sidecarPath.c_str()) == 0);
+    }
+    if (!ok) {
+        ::unlink(tmpPath.c_str());
     }
     free(rendered);
     if (!ok) LOG_E(TAG, "saveSidecar: write failed for %s", sidecarPath.c_str());
@@ -1387,6 +1404,9 @@ struct Context {
     std::string currentSidecarPath;    // MP3 path the sidecar is for; empty = none loaded
     std::string sidecarLoadPendingPath; // MP3 path a Load job was requested for
     int64_t lastSavedPositionMs = -1;
+    // Poll-timer ticks (500 ms) until the next periodic crash-recovery checkpoint.
+    // Live playback position is RAM-only; the sidecar is rewritten no more often
+    // than every ~180 s of active tracked playback (see pollTimerCb).
     uint32_t saveCounterTicks = 0;
     SidecarWorker sidecarWorker;
     int64_t lastRenderedPositionSec = -1; // throttle position label redraws
@@ -1603,9 +1623,11 @@ void refreshFromPlaybackState(Context* self) {
     updateProgressUi(self);
 }
 
-// Autosave the sidecar with the latest position; called from the poll timer
-// every ~20 seconds while playback is active. The write itself happens on
-// the sidecar worker thread.
+// Periodic crash-recovery checkpoint of the sidecar with the latest position;
+// called from the poll timer no more often than every ~180 seconds while
+// playback is active. The write itself happens on the sidecar worker thread.
+// Deliberate actions (pause, track transition, chapter edit, hide/close) still
+// force an immediate save; the live position is RAM-only between checkpoints.
 void maybeSaveSidecar(Context* self) {
     if (!self->playback.playing.load()) return;
     int64_t pos = self->playback.currentPositionMs.load();
@@ -1645,9 +1667,10 @@ void pollTimerCb(lv_timer_t* timer) {
             lvgl_sliderbox_set_value(self->volumeSliderBox, globalVolume, LV_ANIM_OFF);
         }
     }
-    // Tick every 500ms; save every ~20 seconds of ticks while playing.
+    // Tick every 500ms; checkpoint the sidecar every ~180 seconds of ticks while
+    // playing (the maybeSaveSidecar guards skip anything but active tracked playback).
     self->saveCounterTicks++;
-    if (self->saveCounterTicks >= 40) {
+    if (self->saveCounterTicks >= 360) {
         self->saveCounterTicks = 0;
         maybeSaveSidecar(self);
     }
