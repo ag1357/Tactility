@@ -167,10 +167,10 @@
 			compatible = "espressif,esp32-usbhost-hid";
 		};
 
-		// Device B (AetherCore compute accessory) attaches through a powered hub
-		// and enumerates as a TinyUSB CDC-ACM device (0x303A:0x4001); vid/pid are
-		// discovery hints only - AetherLink protocol-v2 CAPABILITIES negotiation
-		// is authoritative for accessory identity.
+		// Device C (compute accessory) attaches through a direct USB-C
+		// connection and enumerates as a TinyUSB CDC-ACM device (0x303A:0x4001);
+		// vid/pid are discovery hints only - AetherLink protocol-v2 CAPABILITIES
+		// negotiation is authoritative for accessory identity.
 		usb_accessory: usb-accessory {
 			compatible = "espressif,esp32-usbhost-cdc";
 			vid = <0x303A>;
