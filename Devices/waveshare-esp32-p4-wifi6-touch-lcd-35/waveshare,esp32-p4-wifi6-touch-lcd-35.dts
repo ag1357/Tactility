@@ -162,6 +162,11 @@
 		compatible = "espressif,esp32-usbhost";
 		peripheral-map = <0>;
 
+		// HID class client (keyboards, mice, headset Consumer Control buttons).
+		usbhosthid0 {
+			compatible = "espressif,esp32-usbhost-hid";
+		};
+
 		// Device B (AetherCore compute accessory) attaches through a powered hub
 		// and enumerates as a TinyUSB CDC-ACM device (0x303A:0x4001); vid/pid are
 		// discovery hints only - AetherLink protocol-v2 CAPABILITIES negotiation
