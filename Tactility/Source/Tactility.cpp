@@ -167,7 +167,6 @@ namespace app {
     namespace apppackagedetails { extern const ::AppManifest manifest; }
     namespace applist { extern const ::AppManifest manifest; }
     namespace apppackagelist { extern const ::AppManifest manifest; }
-    namespace audio { extern const ::AppManifest manifest; }
     namespace audiosettings { extern const ::AppManifest manifest; }
     namespace boot { extern const ::AppManifest manifest; }
     namespace development { extern const ::AppManifest manifest; }
@@ -234,7 +233,6 @@ static void registerInternalApps() {
     app_manager_add(&app::apppackagelist::manifest);
     if (service::audio::isAvailable()) {
         app_manager_add(&app::audiosettings::manifest);
-        app_manager_add(&app::audio::manifest);
     }
     if (device_exists_of_type(&DISPLAY_TYPE)) {
         app_manager_add(&app::display::manifest);
