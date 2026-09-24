@@ -20,5 +20,4 @@ const struct ModuleSymbol audio_stream_module_symbols[] = {
 const struct ModuleSymbol audio_stream_module_symbols[] = {
     MODULE_SYMBOL_TERMINATOR
 };
-
 #endif

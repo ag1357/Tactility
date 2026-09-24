@@ -17,6 +17,8 @@
 #include <tactility/device.h>
 #include <tactility/drivers/pointer.h>
 #include <tactility/drivers/power_supply.h>
+#include <tactility/freertos/semphr.h>
+#include <tactility/freertos/task.h>
 #include <tactility/log.h>
 #include <tactility/memory.h>
 
@@ -46,7 +48,10 @@ int32_t computeButtonMargin(int32_t available_span, int32_t total_button_size) {
 void onAppPressed(lv_event_t* e) {
     auto* appId = static_cast<const char*>(lv_event_get_user_data(e));
     uint32_t instance_id = 0;
-    app_start(appId, 0, nullptr, &instance_id);
+    AppStartContext context;
+    if (app_start_context_from_id(appId, &context) == ERROR_NONE) {
+        app_start_with_context(&context, &instance_id);
+    }
 }
 
 lv_obj_t* createAppButton(lv_obj_t* parent, UiDensity uiDensity, const char* imageFile, const char* appId, int32_t itemMargin, bool isLandscape) {
@@ -215,7 +220,8 @@ void runAutoStart() {
     ) {
         LOG_I(TAG, "Starting %s", CONFIG_TT_AUTO_START_APP_ID);
         uint32_t app_launch_id;
-        app_start(CONFIG_TT_AUTO_START_APP_ID, 0, nullptr, &app_launch_id);
+        AppStartContext context = app_start_context_for_manifest(&manifest);
+        app_start_with_context(&context, &app_launch_id);
     } else if (
         // Auto-start due to user configuration
         settings::loadBootSettings(boot_properties) &&
@@ -224,7 +230,8 @@ void runAutoStart() {
     ) {
         LOG_I(TAG, "Starting %s", boot_properties.autoStartAppId.c_str());
         uint32_t app_launch_id;
-        app_start(boot_properties.autoStartAppId.c_str(), 0, nullptr, &app_launch_id);
+        AppStartContext context = app_start_context_for_manifest(&manifest);
+        app_start_with_context(&context, &app_launch_id);
     } else {
         // No auto-start, consider running system setup
         if (!setup::isCompleted()) {
@@ -233,9 +240,32 @@ void runAutoStart() {
     }
 }
 
+constexpr size_t AUTO_START_STACK_DEPTH = 4096 / sizeof(StackType_t);
+
+struct AutoStartTaskContext {
+    SemaphoreHandle_t done;
+};
+
+void autoStartTaskMain(void* param) {
+    auto* context = static_cast<AutoStartTaskContext*>(param);
+    runAutoStart();
+    xSemaphoreGive(context->done);
+    vTaskDelete(nullptr);
+}
+
+// runAutoStart() reads from flash, and apps run on PSRAM when available.
+// Launcher stays in memory, so we prefer to keep the PSRAM task and temporarily run an IRAM task for auto start logic.
+void runAutoStartIsolated() {
+    AutoStartTaskContext context { .done = xSemaphoreCreateBinary() };
+    check(context.done != nullptr);
+    TaskHandle_t auto_start_task = nullptr;
+    check(xTaskCreate(autoStartTaskMain, "LauncherAutoStart", AUTO_START_STACK_DEPTH, &context, tskIDLE_PRIORITY, &auto_start_task) == pdPASS);
+    xSemaphoreTake(context.done, portMAX_DELAY);
+    vSemaphoreDelete(context.done);
+}
+
 int32_t appMain(int argc, char* argv[]) {
     uint32_t appInstanceId = app_scheduler_current_app_id();
-    runAutoStart();
 
     TaskEventGroup event_group {};
     task_event_group_construct(&event_group);
@@ -244,6 +274,8 @@ int32_t appMain(int argc, char* argv[]) {
     check(app_event_subscribe(&sub, &event_group) == ERROR_NONE);
 
     WindowId window = window_manager_create(appInstanceId, createWidgets, nullptr);
+
+    runAutoStartIsolated();
 
     // The launcher is meant to stay resident (it's the home screen) - it only gives up its
     // thread when app-module's scheduler asks it to (e.g. another new-model app is started).
@@ -283,7 +315,8 @@ extern const ::AppManifest manifest = {
 // used by the old, unconverted CrashDiagnostics app to return to the launcher after a crash).
 uint32_t start() {
     uint32_t instance_id = 0;
-    app_start(manifest.id, 0, nullptr, &instance_id);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_with_context(&context, &instance_id);
     return instance_id;
 }
 

@@ -270,7 +270,8 @@ int32_t appMain(int argc, char* argv[]) {
 
 void start() {
     uint32_t instanceId = 0;
-    app_start(manifest.id, 0, nullptr, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_with_context(&context, &instanceId);
 }
 
 extern const ::AppManifest manifest = {
@@ -279,6 +280,7 @@ extern const ::AppManifest manifest = {
     .category = APP_CATEGORY_SYSTEM,
     .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
     .flags = APP_MANIFEST_FLAG_HIDDEN,
+    .stack = {}
 };
 
 }

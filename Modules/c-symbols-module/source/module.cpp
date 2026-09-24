@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <c_symbols/module.h>
 
-#include <cJSON.h>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -11,28 +10,15 @@
 #include <ctype.h>
 #include <locale.h>
 
-#ifdef ESP_PLATFORM
-#include <esp_log.h>
-
-// libgcc helper functions (no public headers; declared like the elf_loader's
-// libc symbol table declares its own). The __atomic_* names are GCC builtins,
-// so their declarators are parenthesized to suppress the builtin meaning and
-// export the libgcc library function instead.
 extern "C" {
-int __clzsi2(unsigned int);
-int64_t __divdi3(int64_t, int64_t);
-int64_t __moddi3(int64_t, int64_t);
-int64_t __fixdfdi(double);
-double __floatdidf(int64_t);
-double __floatsidf(int);
-unsigned long long (__atomic_load_8)(const volatile void*, int);
-void (__atomic_store_8)(volatile void*, unsigned long long, int);
-unsigned long long (__atomic_exchange_8)(volatile void*, unsigned long long, int);
-}
 
+#if CONFIG_IDF_TARGET_ESP32P4
+// Newlib doesn't provide this (only Picolibc does); a compat shim is force-linked into the
+// firmware for espressif__esp_ipa's sake - see
+// Platforms/platform-esp32/source/drivers/esp32p4_libc_compat.c. Side-loaded apps built against
+// Newlib need it resolved the same way.
+extern int __issignalingf(float);
 #endif
-
-extern "C" {
 
 static const ModuleSymbol SYMBOLS[] = {
     // stdlib.h
@@ -83,6 +69,9 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(fmaxf),
     DEFINE_MODULE_SYMBOL(fminf),
     DEFINE_MODULE_SYMBOL(roundf),
+#if CONFIG_IDF_TARGET_ESP32P4
+    DEFINE_MODULE_SYMBOL(__issignalingf),
+#endif
     // Explicit signatures: libstdc++/libc++'s <cmath> float/double/long double overloads make a
     // bare `&acos` etc. ambiguous. esp-idf newlib's plain, unoverloaded functions match these signatures
     // exactly, so the cast is a no-op there - one list works for all platforms:
@@ -111,6 +100,7 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL_SIGNATURE(round, double (*)(double)),
     // cassert / cstdio
     DEFINE_MODULE_SYMBOL(abort),
+    DEFINE_MODULE_SYMBOL(clearerr),
     DEFINE_MODULE_SYMBOL(fclose),
     DEFINE_MODULE_SYMBOL(feof),
     DEFINE_MODULE_SYMBOL(ferror),
@@ -190,43 +180,6 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(toupper),
     // locale.h
     DEFINE_MODULE_SYMBOL(localeconv),
-    // cJSON.h - the firmware already links cJSON, so external apps reuse this copy
-    // instead of embedding their own.
-    DEFINE_MODULE_SYMBOL(cJSON_CreateObject),
-    DEFINE_MODULE_SYMBOL(cJSON_Delete),
-    DEFINE_MODULE_SYMBOL(cJSON_PrintUnformatted),
-    DEFINE_MODULE_SYMBOL(cJSON_Parse),
-    DEFINE_MODULE_SYMBOL(cJSON_AddArrayToObject),
-    DEFINE_MODULE_SYMBOL(cJSON_AddBoolToObject),
-    DEFINE_MODULE_SYMBOL(cJSON_AddNumberToObject),
-    DEFINE_MODULE_SYMBOL(cJSON_AddStringToObject),
-    DEFINE_MODULE_SYMBOL(cJSON_AddItemToArray),
-    DEFINE_MODULE_SYMBOL(cJSON_GetArrayItem),
-    DEFINE_MODULE_SYMBOL(cJSON_GetArraySize),
-    DEFINE_MODULE_SYMBOL(cJSON_GetObjectItem),
-    DEFINE_MODULE_SYMBOL(cJSON_IsArray),
-    DEFINE_MODULE_SYMBOL(cJSON_IsBool),
-    DEFINE_MODULE_SYMBOL(cJSON_IsNumber),
-    DEFINE_MODULE_SYMBOL(cJSON_IsString),
-    DEFINE_MODULE_SYMBOL(cJSON_IsTrue),
-#ifdef ESP_PLATFORM
-    // esp_log.h - SDK-built app code (e.g. lvgl's log hooks) calls IDF logging
-    DEFINE_MODULE_SYMBOL_SIGNATURE(esp_log, void (*)(esp_log_config_t, const char*, const char*, ...)),
-    DEFINE_MODULE_SYMBOL(esp_log_timestamp),
-    // libgcc helpers the RV32 toolchain emits for 64-bit arithmetic and
-    // std::atomic<int64_t>; present in the firmware's libgcc link.
-    DEFINE_MODULE_SYMBOL(__clzsi2),
-    DEFINE_MODULE_SYMBOL(__divdi3),
-    DEFINE_MODULE_SYMBOL(__moddi3),
-    DEFINE_MODULE_SYMBOL(__fixdfdi),
-    DEFINE_MODULE_SYMBOL(__floatdidf),
-    DEFINE_MODULE_SYMBOL(__floatsidf),
-    // Aliased: the plain macro stringifies its token, which the parenthesized
-    // builtin-suppressing declarator would carry into the name.
-    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_load_8", (__atomic_load_8)),
-    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_store_8", (__atomic_store_8)),
-    DEFINE_MODULE_SYMBOL_ALIAS("__atomic_exchange_8", (__atomic_exchange_8)),
-#endif
     MODULE_SYMBOL_TERMINATOR
 };
 

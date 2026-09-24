@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <app/manager.h>
 #include <app/package_manifest.h>
-#include <app/private/arguments.h>
 #include <app/private/binary_path.h>
+#include <app/private/env_internal.h>
 #include <app/private/fd_table.h>
 #include <app/private/fs.h>
 #include <app/private/ledger.h>
@@ -84,7 +84,7 @@ error_t app_manager_add_package(const PackageManifest* package, const char* cons
         LOG_E(TAG, "Package with id '%s' is already registered", package->id);
         return ERROR_INVALID_ARGUMENT;
     }
-    AppPackageRecord record { .package = *package };
+    AppPackageRecord record { .package = *package, .app_ids = {} };
     record.app_ids.reserve(app_id_count);
     for (size_t i = 0; i < app_id_count; i++) {
         record.app_ids.emplace_back(app_ids[i]);
@@ -137,14 +137,13 @@ void app_manager_for_each_package(AppPackageVisitorFn visitor, void* context) {
     mutex_unlock(&ledger.mutex);
 }
 
-error_t app_manager_start_internal(const AppManifest* manifest, AppLocation location, AppStackConfig stack, AppInstanceId parent_instance_id, int argc, const char* const argv_in[], const AppStreamBinding* bindings, size_t binding_count, AppInstanceId* out_app_instance_id) {
-    char** argv = app_arguments_copy(argc, argv_in);
-    if (argc > 0 && argv == nullptr) {
-        return ERROR_OUT_OF_MEMORY;
-    }
+error_t app_manager_start_internal(const AppStartContext* context, AppInstanceId* out_app_instance_id) {
+    const AppManifest* manifest = context->manifest;
+    const AppStreamBinding* bindings = context->bindings;
+    size_t binding_count = context->binding_count;
+    AppInstanceId parent_instance_id = context->parent_id;
 
     if (binding_count != 0 && bindings == nullptr) {
-        app_arguments_free(argc, argv);
         return ERROR_INVALID_ARGUMENT;
     }
 
@@ -152,8 +151,22 @@ error_t app_manager_start_internal(const AppManifest* manifest, AppLocation loca
 
     mutex_lock(&ledger.mutex);
     AppInstanceId target_id = ledger.next_instance_id++;
-    AppInstanceRecord record { .id = target_id, .manifest = manifest, .state = APP_INSTANCE_STATE_STARTING, .task = nullptr };
+    AppInstanceRecord record {
+        .id = target_id,
+        .manifest = manifest,
+        .state = APP_INSTANCE_STATE_STARTING,
+        .task = nullptr,
+    };
     record.parent_id = parent_instance_id;
+
+    // Inherit the parent environment
+    if (parent_instance_id != 0) {
+        auto parent_iterator = ledger.instances.find(parent_instance_id);
+        if (parent_iterator != ledger.instances.end()) {
+            record.env = parent_iterator->second.env;
+        }
+    }
+    app_env_apply(record.env, context->environment);
     ledger.instances[target_id] = record;
     // Construct on the map-resident copy, not `record`: fds[] point into slots[] by address
     // (fd_table.h), so constructing on the stack-local record would leave them dangling.
@@ -175,12 +188,11 @@ error_t app_manager_start_internal(const AppManifest* manifest, AppLocation loca
             app_fd_table_teardown(&ledger.instances[target_id].fd_table);
             ledger.instances.erase(target_id);
             mutex_unlock(&ledger.mutex);
-            app_arguments_free(argc, argv);
             return bind_result;
         }
     }
 
-    error_t error = app_scheduler_start(target_id, location, stack, argc, argv);
+    error_t error = app_scheduler_start(target_id, context);
     if (error != ERROR_NONE) {
         for (size_t j = 0; j < binding_count; j++) {
             app_stream_unsubscribe(bindings[j].stream);
@@ -324,7 +336,7 @@ void app_manager_install_path_scan(void) {
     mutex_lock(&registry.mutex);
     std::unordered_map<std::string, KnownPackage> known_packages;
     for (const auto& [id, record] : registry.scanned) {
-        KnownPackage known { .path = record->path };
+        KnownPackage known { .path = record->path, .manifest_ids = {} };
         for (const auto& manifest : record->manifests) {
             known.manifest_ids.emplace_back(manifest.id);
         }

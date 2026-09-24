@@ -43,7 +43,7 @@ static error_t start() {
 }
 
 static error_t stop() {
-    device_listener_remove(&on_device_event);
+    device_listener_remove(&on_device_event, nullptr);
     return ERROR_NONE;
 }
 
@@ -57,7 +57,9 @@ Module unphone_module = {
     .name = "unphone",
     .start = start,
     .stop = stop,
-    .drivers = unphone_drivers
+    .drivers = unphone_drivers,
+    .symbols = nullptr,
+    .internal = nullptr
 };
 
 }

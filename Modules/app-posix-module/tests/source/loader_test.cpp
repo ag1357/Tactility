@@ -7,13 +7,16 @@
 #include <app/manager.h>
 #include <app/start.h>
 #include <app/scheduler.h>
+#include <app/stream.h>
 
 #include <service/manager.h>
 
 #include <tactility/delay.h>
 
 #include <atomic>
+#include <cstring>
 #include <string>
+#include <unistd.h>
 
 extern ServiceManifest loader_service_manifest;              // app-posix-module's own
 extern ServiceManifest app_internal_loader_service_manifest; // app-module's real memory loader
@@ -77,7 +80,9 @@ int32_t parent_app_main(int, char*[]) {
     app_manager_add(&fixture_manifest);
 
     AppInstanceId fixture_id = 0;
-    app_start_for_result("test.posix.fixture", 0, nullptr, self_id, &fixture_id);
+    AppStartContext context = app_start_context_for_manifest(&fixture_manifest);
+    app_start_context_set_parent(&context, self_id);
+    app_start_with_context(&context, &fixture_id);
 
     while (true) {
         if (task_event_group_wait_any(&event_group, nullptr, pdMS_TO_TICKS(5000)) != ERROR_NONE) {
@@ -103,7 +108,95 @@ int32_t parent_app_main(int, char*[]) {
     return 0;
 }
 
+std::string g_printf_fixture_output;
+std::string g_printf_fixture_stderr;
+
+// Starts the printf fixture with its stdout/stderr each piped through an AppStream, proving
+// printf()/fprintf(stderr, ...) reach app_io_write() rather than bypassing straight to libc.
+int32_t printf_parent_app_main(int, char*[]) {
+    static uint8_t stdoutBuffer[256];
+    static uint8_t stderrBuffer[256];
+    AppStream stdoutStream {};
+    AppStream stderrStream {};
+
+    TaskEventGroup event_group {};
+    task_event_group_construct(&event_group);
+
+    AppEventSubscription sub {};
+    app_event_subscribe(&sub, &event_group);
+
+    AppInstanceId self_id = app_scheduler_current_app_id();
+
+    AppStreamBinding bindings[] = {
+        { STDOUT_FILENO, &stdoutStream, stdoutBuffer, sizeof(stdoutBuffer), &event_group },
+        { STDERR_FILENO, &stderrStream, stderrBuffer, sizeof(stderrBuffer), &event_group },
+    };
+
+    AppLocation location { APP_LOCATION_PATH, const_cast<char*>(PRINTF_FIXTURE_APP_PATH) };
+    AppInstanceId childId = 0;
+    AppStartContext context = app_start_context_for_location(location);
+    app_start_context_set_streams(&context, bindings, 2);
+    app_start_context_set_parent(&context, self_id);
+    app_start_with_context(&context, &childId);
+
+    uint8_t drain[256];
+    bool childDone = false;
+    while (!childDone) {
+        if (task_event_group_wait_any(&event_group, nullptr, pdMS_TO_TICKS(5000)) != ERROR_NONE) {
+            break; // safety net so a bug here can't hang the test suite
+        }
+        size_t n;
+        while ((n = app_stream_read(&stdoutStream, drain, sizeof(drain))) > 0) {
+            g_printf_fixture_output.append(reinterpret_cast<const char*>(drain), n);
+        }
+        while ((n = app_stream_read(&stderrStream, drain, sizeof(drain))) > 0) {
+            g_printf_fixture_stderr.append(reinterpret_cast<const char*>(drain), n);
+        }
+        AppEvent event {};
+        while (app_event_poll(&sub, &event) == ERROR_NONE) {
+            if (event.type == APP_EVENT_RESULT && event.result.launch_id == childId) {
+                childDone = true;
+            }
+        }
+    }
+    size_t n;
+    while ((n = app_stream_read(&stdoutStream, drain, sizeof(drain))) > 0) {
+        g_printf_fixture_output.append(reinterpret_cast<const char*>(drain), n);
+    }
+    while ((n = app_stream_read(&stderrStream, drain, sizeof(drain))) > 0) {
+        g_printf_fixture_stderr.append(reinterpret_cast<const char*>(drain), n);
+    }
+
+    app_stream_unsubscribe(&stdoutStream);
+    app_stream_unsubscribe(&stderrStream);
+    app_event_unsubscribe(&sub);
+    task_event_group_destruct(&event_group);
+    return 0;
+}
+
 } // namespace
+
+TEST_CASE("app-posix-module's loader-path service dlopen()s a .so whose printf()/fprintf(stderr, ...) output reaches the parent's streams") {
+    ensure_path_loader_registered();
+    ensure_memory_loader_registered();
+    g_printf_fixture_output.clear();
+    g_printf_fixture_stderr.clear();
+
+    AppManifest parent_manifest { "test.posix.printf_parent", "PrintfParent", APP_CATEGORY_USER, { APP_LOCATION_MEMORY, reinterpret_cast<void*>(printf_parent_app_main) } };
+    REQUIRE_EQ(app_manager_add(&parent_manifest), ERROR_NONE);
+
+    AppInstanceId parent_id = 0;
+    AppStartContext parent_context;
+    REQUIRE_EQ(app_start_context_from_id("test.posix.printf_parent", &parent_context), ERROR_NONE);
+    REQUIRE_EQ(app_start_with_context(&parent_context, &parent_id), ERROR_NONE);
+    REQUIRE(wait_for_state(parent_id, APP_INSTANCE_STATE_STOPPED, 3000));
+
+    CHECK_EQ(g_printf_fixture_output, "hello from dlopen'd app\n");
+    // Not exact: the child's own scheduler bookkeeping may also log to stderr while running.
+    CHECK(g_printf_fixture_stderr.find("oops from dlopen'd app\n") != std::string::npos);
+
+    app_manager_remove("test.posix.printf_parent");
+}
 
 TEST_CASE("app-posix-module's loader-path service dlopen()s a .so and calls its main(), which resolves a real Tactility symbol against the host") {
     ensure_path_loader_registered();
@@ -115,7 +208,9 @@ TEST_CASE("app-posix-module's loader-path service dlopen()s a .so and calls its 
     REQUIRE_EQ(app_manager_add(&parent_manifest), ERROR_NONE);
 
     AppInstanceId parent_id = 0;
-    REQUIRE_EQ(app_start("test.posix.parent", 0, nullptr, &parent_id), ERROR_NONE);
+    AppStartContext parent_context;
+    REQUIRE_EQ(app_start_context_from_id("test.posix.parent", &parent_context), ERROR_NONE);
+    REQUIRE_EQ(app_start_with_context(&parent_context, &parent_id), ERROR_NONE);
     REQUIRE(wait_for_state(parent_id, APP_INSTANCE_STATE_STOPPED, 3000));
 
     CHECK(g_fixture_result_received.load(std::memory_order_acquire));

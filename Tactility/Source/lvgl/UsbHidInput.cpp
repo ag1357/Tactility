@@ -264,8 +264,8 @@ static void usbHidInputTask(void* arg) {
             break;
         }
         case USB_HID_EVENT_CONSUMER:
-            handleConsumerUsage(hid_evt.consumer.usage, hid_evt.consumer.pressed);
-            break;
+                handleConsumerUsage(hid_evt.consumer.usage, hid_evt.consumer.pressed);
+                break;
         case USB_HID_EVENT_KEYBOARD_CONNECTED:
             if (ctx->kb_indev && lvgl_try_lock(pdMS_TO_TICKS(200))) {
                 lvgl_keyboard_enable(ctx->kb_indev);

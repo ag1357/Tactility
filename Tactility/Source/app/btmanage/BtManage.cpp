@@ -237,7 +237,8 @@ int32_t appMain(int argc, char* argv[]) {
 
 uint32_t start() {
     uint32_t instanceId = 0;
-    app_start(manifest.id, 0, nullptr, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_with_context(&context, &instanceId);
     return instanceId;
 }
 
@@ -245,7 +246,9 @@ extern const ::AppManifest manifest = {
     .id = "tactility.btmanage",
     .name = "Bluetooth",
     .category = APP_CATEGORY_SETTINGS,
-    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) }
+    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
+    .flags = 0,
+    .stack = {}
 };
 
 } // namespace tt::app::btmanage

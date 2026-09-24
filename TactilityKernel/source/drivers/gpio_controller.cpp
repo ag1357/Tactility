@@ -75,6 +75,12 @@ GpioDescriptor* gpio_descriptor_acquire(
     desc->flags = flags;
     mutex_unlock(&data->mutex);
 
+    // Peripheral bus owns pin configuration itself; skip ours to avoid conflicting with its
+    // own reservation.
+    if (owner == GPIO_OWNER_PERIPHERAL) {
+        return desc;
+    }
+
     // Init flags by implementation
     auto init_result = gpio_descriptor_set_flags(desc, flags);
     if (init_result != ERROR_NONE) {
@@ -115,6 +121,21 @@ error_t gpio_controller_get_pin_count(Device* device, uint32_t* count) {
     *count = data->pin_count;
     mutex_unlock(&data->mutex);
     return ERROR_NONE;
+}
+
+error_t gpio_controller_get_level(Device* device, gpio_pin_t pin, bool* high) {
+    auto* data = static_cast<struct GpioControllerData*>(device_get_driver_data(device));
+
+    mutex_lock(&data->mutex);
+    if (pin >= data->pin_count) {
+        mutex_unlock(&data->mutex);
+        return ERROR_OUT_OF_RANGE;
+    }
+    GpioDescriptor* desc = &data->descriptors[pin];
+    mutex_unlock(&data->mutex);
+
+    const auto* driver = device_get_driver(device);
+    return GPIO_INTERNAL_API(driver)->get_level(desc, high);
 }
 
 error_t gpio_controller_init_descriptors(Device* device, uint32_t pin_count, void* controller_context) {

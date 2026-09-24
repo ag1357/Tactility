@@ -426,12 +426,15 @@ extern const ::AppManifest manifest = {
     .id = "tactility.i2cscanner",
     .name = "I2C Scanner",
     .category = APP_CATEGORY_SYSTEM,
-    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) }
+    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
+    .flags = 0,
+    .stack = {}
 };
 
 uint32_t start() {
     uint32_t instanceId = 0;
-    app_start(manifest.id, 0, nullptr, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_with_context(&context, &instanceId);
     return instanceId;
 }
 

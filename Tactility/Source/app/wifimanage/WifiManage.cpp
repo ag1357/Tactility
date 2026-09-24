@@ -241,7 +241,9 @@ int32_t appMain(int argc, char* argv[]) {
 
 uint32_t start(uint32_t callerAppInstanceId) {
     uint32_t instanceId = 0;
-    app_start_for_result(manifest.id, 0, nullptr, callerAppInstanceId, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_context_set_parent(&context, callerAppInstanceId);
+    app_start_with_context(&context, &instanceId);
     return instanceId;
 }
 
@@ -249,7 +251,9 @@ extern const ::AppManifest manifest = {
     .id = "tactility.wifimanage",
     .name = "Wi-Fi",
     .category = APP_CATEGORY_SETTINGS,
-    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) }
+    .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
+    .flags = 0,
+    .stack = {}
 };
 
 } // namespace tt::app::wifimanage

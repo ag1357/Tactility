@@ -85,7 +85,7 @@ int32_t appMain(int argc, char* argv[]) {
 
     if (ctx.resultCode == 0) {
         // The parent captures this via an AppStream bound to our stdout (see startWithMode()) -
-        // see AppStdioWrap.cpp for how printf() itself gets routed there on POSIX.
+        // see Modules/app-module/source/stdio_wrap.cpp for how printf() itself gets routed there on POSIX.
         LOG_I(TAG, "Result: %s", ctx.resultPath.c_str());
         printf("%s", ctx.resultPath.c_str());
     }
@@ -107,7 +107,11 @@ uint32_t startWithMode(const char* modeArg, uint32_t callerAppInstanceId, AppStr
         .event_group = eventGroup,
     };
     uint32_t instanceId = 0;
-    app_start_for_result_with_streams(manifest.id, 1, argv, &binding, 1, callerAppInstanceId, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_context_set_arguments_ext(&context, 1, argv);
+    app_start_context_set_streams(&context, &binding, 1);
+    app_start_context_set_parent(&context, callerAppInstanceId);
+    app_start_with_context(&context, &instanceId);
     return instanceId;
 }
 
@@ -127,6 +131,7 @@ extern const ::AppManifest manifest = {
     .category = APP_CATEGORY_SYSTEM,
     .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
     .flags = APP_MANIFEST_FLAG_HIDDEN,
+    .stack = {}
 };
 
 } // namespace

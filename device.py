@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import glob
 import os
 import shutil
@@ -118,6 +120,12 @@ def write_partition_table(output_file, device_properties: dict, is_dev: bool):
     output_file.write("CONFIG_PARTITION_TABLE_CUSTOM=y\n")
     output_file.write(f"CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"{partition_filename}\"\n")
     output_file.write(f"CONFIG_PARTITION_TABLE_FILENAME=\"{partition_filename}\"\n")
+    idf_target = get_property_or_exit(device_properties, "hardware.target").lower()
+    if idf_target == "esp32p4":
+        # ESP-IDF 6.1's P4 bootloader (0x6140 bytes) no longer fits under the default
+        # CONFIG_PARTITION_TABLE_OFFSET=0x8000 budget (max 0x6000), regardless of device config.
+        # The partition CSVs leave their offsets blank so they auto-place relative to this value.
+        output_file.write("CONFIG_PARTITION_TABLE_OFFSET=0x10000\n")
 
 def write_tactility_variables(output_file, device_properties: dict, device_id: str):
     # Board and vendor
@@ -150,6 +158,13 @@ def write_core_variables(output_file, device_properties: dict):
     idf_target = get_property_or_exit(device_properties, "hardware.target").lower()
     output_file.write("# Target\n")
     output_file.write(f"CONFIG_IDF_TARGET=\"{idf_target}\"\n")
+    # ESP-IDF 6.x defaults default warnings (incl. -Wmissing-field-initializers) to errors;
+    # this codebase's designated initializers rely on the old warn-only behavior.
+    output_file.write("CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y\n")
+    # ESP-IDF 6.x defaults to Picolibc, which drops per-task stdio redirection and some
+    # newlib-internal symbols (_ctype_, __getreent) this repo's ELF-loader ABI exports.
+    # Stay on Newlib rather than re-auditing every per-task stdio assumption.
+    output_file.write("CONFIG_LIBC_NEWLIB=y\n")
     output_file.write("# CPU\n")
     output_file.write("CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y\n")
     output_file.write("CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240\n")
@@ -157,8 +172,8 @@ def write_core_variables(output_file, device_properties: dict):
     output_file.write(f"CONFIG_{idf_target.upper()}_DEFAULT_CPU_FREQ_MHZ=240\n")
     if idf_target != "esp32": # Not available on original ESP32
         output_file.write("# Enable usage of MALLOC_CAP_EXEC on IRAM:\n")
-        output_file.write("CONFIG_ESP_SYSTEM_MEMPROT_FEATURE=n\n")
-        output_file.write("CONFIG_ESP_SYSTEM_MEMPROT_FEATURE_LOCK=n\n")
+        output_file.write("CONFIG_ESP_SYSTEM_MEMPROT=n\n")
+        output_file.write("CONFIG_ESP_SYSTEM_MEMPROT_PMS_LOCK=n\n")
     else:
         # Original ESP32 has very limited IRAM (~328KB shared with Wi-Fi/BT).
         # Disable Wi-Fi IRAM optimizations to free ~27KB; throughput impact is
@@ -169,6 +184,14 @@ def write_core_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_ESP_WIFI_RX_IRAM_OPT=n\n")
         output_file.write("CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y\n")
         output_file.write("CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH=y\n")
+    if idf_target == "esp32p4":
+        # EspNowBackendHosted.cpp's esp_hosted_send_custom_data()/esp_hosted_register_custom_callback()
+        # need esp_hosted's peer-data feature enabled to exist at all.
+        output_file.write("CONFIG_ESP_HOSTED_HOST_FEAT_PEER_DATA=y\n")
+        # ESP-IDF 6.1 defaults to requiring chip rev >=v3.1; boards in this repo (e.g. m5stack-tab5)
+        # ship v1.0 silicon, which that bootloader refuses to boot.
+        output_file.write("CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y\n")
+        output_file.write("CONFIG_ESP32P4_REV_MIN_100=y\n")
 def write_flash_variables(output_file, device_properties: dict):
     flash_size = get_property_or_exit(device_properties, "hardware.flashSize")
     if not flash_size.endswith("MB"):
@@ -181,6 +204,13 @@ def write_flash_variables(output_file, device_properties: dict):
     esptool_flash_freq = get_property_or_none(device_properties, "hardware.esptoolFlashFreq")
     if esptool_flash_freq is not None:
         output_file.write(f"CONFIG_ESPTOOLPY_FLASHFREQ_{esptool_flash_freq}=y\n")
+    if esptool_flash_freq == "120M":
+        # >80MHz flash needs HPM; HPM-DC (dummy-cycle auto-tuning) requires a bootloader
+        # built with BOOTLOADER_FLASH_DC_AWARE, which existing units in the field don't have -
+        # disable it rather than force a bootloader reflash.
+        output_file.write("CONFIG_SPI_FLASH_HPM_ENA=y\n")
+        output_file.write("# CONFIG_SPI_FLASH_HPM_AUTO is not set\n")
+        output_file.write("CONFIG_SPI_FLASH_HPM_DC_DISABLE=y\n")
 
 def write_spiram_variables(output_file, device_properties: dict):
     idf_target = get_property_or_exit(device_properties, "hardware.target").lower()
@@ -242,6 +272,9 @@ def write_lvgl_variable_placeholders(output_file):
     output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=12\n")
     output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=30\n")
     output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=12\n")
+    # Terminal fonts are currently tied to LVGL settings
+    output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_12=y\n")
+    output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=12\n")
 
 def write_lvgl_variables(output_file, device_properties: dict):
     output_file.write("# LVGL\n")
@@ -258,6 +291,9 @@ def write_lvgl_variables(output_file, device_properties: dict):
     output_file.write(f"CONFIG_LV_COLOR_DEPTH={color_depth}\n")
     output_file.write(f"CONFIG_LV_COLOR_DEPTH_{color_depth}=y\n")
     output_file.write("CONFIG_LV_DISP_DEF_REFR_PERIOD=10\n")
+    has_statusbar_colors_inverted = get_boolean_property_or_false(device_properties, "lvgl.statusbarColorsInverted")
+    if has_statusbar_colors_inverted:
+        output_file.write("CONFIG_TT_LVGL_STATUSBAR_COLORS_INVERTED=y\n")
     theme = get_property_or_default(device_properties, "lvgl.theme", "DefaultDark")
     if theme == "DefaultDark":
         output_file.write("CONFIG_LV_THEME_DEFAULT_DARK=y\n")
@@ -275,6 +311,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
     font_height_text = get_property_or_default(device_properties, "lvgl.fontSize", "14")
     font_height = safe_int(font_height_text, f"Font height must be an integer, but was: '{font_height_text}'")
     if font_height <= 12:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_12=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=12\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_8=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_12=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_16=y\n")
@@ -286,6 +324,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=30\n")
         output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=12\n")
     elif font_height <= 14:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_14=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=14\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_10=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_14=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
@@ -297,6 +337,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=36\n")
         output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=16\n")
     elif font_height <= 16:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_16=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=16\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_12=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_16=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_22=y\n")
@@ -308,6 +350,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=42\n")
         output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=16\n")
     elif font_height <= 18:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_18=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=18\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_14=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_24=y\n")
@@ -319,6 +363,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=48\n")
         output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=20\n")
     elif font_height <= 24:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_24=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=24\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_24=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_30=y\n")
@@ -330,6 +376,8 @@ def write_lvgl_variables(output_file, device_properties: dict):
         output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=64\n")
         output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=24\n")
     else:
+        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_28=y\n")
+        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=28\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_20=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_28=y\n")
         output_file.write("CONFIG_LV_FONT_MONTSERRAT_36=y\n")

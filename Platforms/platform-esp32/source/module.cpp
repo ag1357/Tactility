@@ -84,8 +84,6 @@ extern "C" {
     // GCC integer arithmetic helpers (needed on 32-bit targets for 64-bit ops)
     long long __divdi3(long long a, long long b);
     long long __moddi3(long long a, long long b);
-    unsigned long long __udivdi3(unsigned long long a, unsigned long long b);
-    unsigned long long __umoddi3(unsigned long long a, unsigned long long b);
 #else
     extern double __adddf3(double a, double b);
     extern double __subdf3(double a, double b);
@@ -119,7 +117,11 @@ extern "C" {
     int __clzsi2(unsigned int x);
     // GCC 64-bit integer arithmetic helpers (needed for 64-bit div on 32-bit RISC-V)
     long long __divdi3(long long a, long long b);
+    long long __moddi3(long long a, long long b);
     unsigned long long __udivdi3(unsigned long long a, unsigned long long b);
+    unsigned long long (__atomic_load_8)(const volatile void*, int);
+    void (__atomic_store_8)(volatile void*, unsigned long long, int);
+    unsigned long long (__atomic_exchange_8)(volatile void*, unsigned long long, int);
 #endif
 }
 
@@ -284,8 +286,6 @@ static const ModuleSymbol platform_esp32_symbols[] = {
     DEFINE_MODULE_SYMBOL(__gtdf2),
     DEFINE_MODULE_SYMBOL(__divdi3),
     DEFINE_MODULE_SYMBOL(__moddi3),
-    DEFINE_MODULE_SYMBOL(__udivdi3),
-    DEFINE_MODULE_SYMBOL(__umoddi3),
 #else
     DEFINE_MODULE_SYMBOL(__adddf3),
     DEFINE_MODULE_SYMBOL(__subdf3),
@@ -316,14 +316,17 @@ static const ModuleSymbol platform_esp32_symbols[] = {
     DEFINE_MODULE_SYMBOL(__gtdf2),
     DEFINE_MODULE_SYMBOL(__clzsi2),
     DEFINE_MODULE_SYMBOL(__divdi3),
+    DEFINE_MODULE_SYMBOL(__moddi3),
     DEFINE_MODULE_SYMBOL(__udivdi3),
+    DEFINE_MODULE_SYMBOL(__atomic_load_8),
+    DEFINE_MODULE_SYMBOL(__atomic_store_8),
+    DEFINE_MODULE_SYMBOL(__atomic_exchange_8),
 #endif
     MODULE_SYMBOL_TERMINATOR,
 };
 
 extern Driver esp32_adc_oneshot_driver;
 extern Driver esp32_gpio_driver;
-extern Driver esp32_i2c_driver;
 extern Driver esp32_i2c_master_driver;
 extern Driver esp32_i2s_driver;
 #if SOC_LCD_I80_SUPPORTED
@@ -337,7 +340,7 @@ extern Driver esp32_sdspi_driver;
 extern Driver esp32_spi_driver;
 extern Driver esp32_uart_driver;
 extern Driver esp32_grove_driver;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
 extern Driver esp32_wifi_driver;
 extern Driver esp32_wifi_pinned_driver;
 #endif
@@ -378,7 +381,6 @@ extern Driver esp32_usb_cdc_device_driver;
 static Driver* const platform_esp32_drivers[] = {
     &esp32_adc_oneshot_driver,
     &esp32_gpio_driver,
-    &esp32_i2c_driver,
     &esp32_i2c_master_driver,
     &esp32_i2s_driver,
 #if SOC_LCD_I80_SUPPORTED
@@ -392,7 +394,7 @@ static Driver* const platform_esp32_drivers[] = {
     &esp32_spi_driver,
     &esp32_uart_driver,
     &esp32_grove_driver,
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_SLAVE_SOC_WIFI_SUPPORTED)
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
     &esp32_wifi_driver,
     &esp32_wifi_pinned_driver,
 #endif

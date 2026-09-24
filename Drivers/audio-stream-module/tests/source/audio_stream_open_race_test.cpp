@@ -12,6 +12,8 @@
 
 #include "doctest.h"
 
+#include <atomic>
+
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -36,7 +38,7 @@ struct MockCodecState {
     // When set, open() blocks until the gate is given, letting the test hold
     // open_stream() in its mid-open window (slot reserved, codec not yet opened).
     SemaphoreHandle_t open_gate = nullptr;
-    int open_count = 0;
+    std::atomic<int> open_count{0};
     int close_count = 0;
 };
 
@@ -162,8 +164,10 @@ static void reset_mock_state(MockCodecState& state, AudioCodecDirection capabili
         vSemaphoreDelete(state.open_gate);
         state.open_gate = nullptr;
     }
-    state = MockCodecState();
     state.capabilities = capabilities;
+    state.fail_open = false;
+    state.open_count = 0;
+    state.close_count = 0;
 }
 
 struct OpenRequest {

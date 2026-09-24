@@ -62,9 +62,13 @@ if (DEFINED ENV{ESP_IDF_VERSION})
     # to every target; PanicHandler.cpp branches internally per architecture.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_panic_handler" APPEND)
 
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=read" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=write" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=close" APPEND)
+    # Wraps newlib's reentrant syscall stubs, not the plain read()/write()/close() newlib itself
+    # implements as thin wrappers around them. newlib's own stdio (fflush()'s buffer-flush path in particular)
+    # calls these _r stubs directly, bypassing the plain names entirely.
+    # See Modules/app-module/source/stdio_wrap.cpp's own comment for the exact call chain.
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_read_r" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_write_r" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_close_r" APPEND)
 
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_button_create" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_dropdown_create" APPEND)
@@ -85,6 +89,8 @@ else ()
     add_compile_definitions(CONFIG_TT_LAUNCHER_APP_ID="tactility.launcher")
     add_compile_definitions(CONFIG_TT_AUTO_START_APP_ID="")
     add_compile_definitions(CONFIG_TT_USER_DATA_LOCATION_INTERNAL)
+    add_compile_definitions(CONFIG_TT_LVGL_STATUSBAR_COLORS_INVERTED=false)
+
 endif ()
 
 project(Tactility)
@@ -118,11 +124,14 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Libraries/minitar)
     add_subdirectory(Libraries/minmea)
     add_subdirectory(Modules/lvgl-module)
+    add_subdirectory(Modules/audio-decoder-module)
     add_subdirectory(Modules/c-symbols-module)
+    add_subdirectory(Modules/cjson-module)
     add_subdirectory(Modules/cpp-symbols-module)
     add_subdirectory(Modules/crypt-module)
     add_subdirectory(Modules/freertos-module)
     add_subdirectory(Modules/gps-module)
+    add_subdirectory(Modules/graphics-module)
     add_subdirectory(Modules/http-module)
     add_subdirectory(Modules/mbedtls-module)
     add_subdirectory(Modules/posix-symbols-module)

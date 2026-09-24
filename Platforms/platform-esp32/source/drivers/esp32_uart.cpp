@@ -263,6 +263,7 @@ static error_t open(Device* device) {
         .stop_bits = to_esp32_stop_bits(driver_data->config.stop_bits),
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // Flow control is not yet exposed via UartConfig
         .rx_flow_ctrl_thresh = 0,
+        .rx_glitch_filt_thresh = 0,
         .source_clk = UART_SCLK_DEFAULT,
         .flags = {
             .allow_pd = 0,
@@ -284,10 +285,10 @@ static error_t open(Device* device) {
 
     // Acquire pins from the specified GPIO pin specs. Optional pins are allowed.
     bool pins_ok =
-        acquire_pin_or_set_null(dts_config->pin_tx, GPIO_FLAG_DIRECTION_OUTPUT, &driver_data->tx_descriptor) &&
-        acquire_pin_or_set_null(dts_config->pin_rx, GPIO_FLAG_DIRECTION_INPUT, &driver_data->rx_descriptor) &&
-        acquire_pin_or_set_null(dts_config->pin_cts, GPIO_FLAG_DIRECTION_INPUT, &driver_data->cts_descriptor) &&
-        acquire_pin_or_set_null(dts_config->pin_rts, GPIO_FLAG_DIRECTION_OUTPUT, &driver_data->rts_descriptor);
+        acquire_pin_or_set_null(dts_config->pin_tx, GPIO_FLAG_DIRECTION_OUTPUT, &driver_data->tx_descriptor, GPIO_OWNER_PERIPHERAL) &&
+        acquire_pin_or_set_null(dts_config->pin_rx, GPIO_FLAG_DIRECTION_INPUT, &driver_data->rx_descriptor, GPIO_OWNER_PERIPHERAL) &&
+        acquire_pin_or_set_null(dts_config->pin_cts, GPIO_FLAG_DIRECTION_INPUT, &driver_data->cts_descriptor, GPIO_OWNER_PERIPHERAL) &&
+        acquire_pin_or_set_null(dts_config->pin_rts, GPIO_FLAG_DIRECTION_OUTPUT, &driver_data->rts_descriptor, GPIO_OWNER_PERIPHERAL);
 
     if (!pins_ok) {
         LOG_E(TAG, "%s failed to acquire UART pins", device->name);

@@ -54,9 +54,8 @@ struct UsbHidContext {
     std::atomic<hid_host_device_handle_t> kb_handle{nullptr};
     std::atomic<bool> kb_led_pending{false};
 
-    // Consumer Control interface (e.g. headset buttons, media keyboards): non-boot HID
-    // interfaces whose report descriptor maps to a Consumer-page button bitmap via the
-    // kernel's generic hid_consumer parser. One consumer interface at a time.
+    // Consumer Control interface (headset buttons, media keys), decoded via hid_consumer.
+    // One at a time.
     HidConsumerMap consumer_map = {};
     std::atomic<hid_host_device_handle_t> consumer_handle{nullptr};
     uint16_t consumer_prev_usages[HID_CONSUMER_MAX_USAGES] = {};
@@ -77,9 +76,6 @@ static void usb_hid_keyboard_device_construct(UsbHidContext* ctx);
 static void usb_hid_keyboard_device_destruct(UsbHidContext* ctx);
 static void usb_hid_keyboard_publish_key(UsbHidContext* ctx, uint32_t lv_key, bool pressed, bool ctrl, bool alt, uint8_t hid_keycode, uint8_t hid_modifier);
 }
-
-// HID usage code -> Unicode codepoint mapping is shared with other HID transports (e.g. the
-// BLE HID host) in TactilityKernel's keyboard driver: keyboard_key_from_hid_usage().
 
 static void publish_event(UsbHidContext* ctx, const UsbHidEvent* evt) {
     if (xSemaphoreTake(ctx->sub_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
@@ -198,7 +194,7 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
                 publish_event(ctx, &evt);
 
                 if (b2 != ctx->prev_mouse_button2) {
-                    UsbHidEvent key_evt = { .type = USB_HID_EVENT_KEY, .key = { USB_HID_KEY_ESC, b2 } };
+                    UsbHidEvent key_evt = { .type = USB_HID_EVENT_KEY, .key = { USB_HID_KEY_ESC, b2, false, false } };
                     publish_event(ctx, &key_evt);
                     ctx->prev_mouse_button2 = b2;
                 }
@@ -259,6 +255,13 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
         } else if (params.proto == HID_PROTOCOL_MOUSE) {
             ctx->mouse_connected = false;
         } else if (ctx->consumer_handle.load() == handle) {
+            // Synthesize releases on disconnect, or a mid-press unplug latches the app-side
+            // state (audio service latch/repeat) forever.
+            for (size_t j = 0; j < ctx->consumer_prev_count; j++) {
+                UsbHidEvent evt = { .type = USB_HID_EVENT_CONSUMER,
+                                    .consumer = { ctx->consumer_prev_usages[j], false } };
+                publish_event(ctx, &evt);
+            }
             ctx->consumer_handle.store(nullptr);
             ctx->consumer_prev_count = 0;
         }
@@ -271,7 +274,7 @@ static void hid_interface_callback(hid_host_device_handle_t handle,
             UsbHidEventType disc_type = (params.proto == HID_PROTOCOL_KEYBOARD)
                 ? USB_HID_EVENT_KEYBOARD_DISCONNECTED
                 : USB_HID_EVENT_MOUSE_DISCONNECTED;
-            UsbHidEvent evt = { .type = disc_type };
+            UsbHidEvent evt = { .type = disc_type, .scroll = {} };
             publish_event(ctx, &evt);
         }
         break;
@@ -316,11 +319,8 @@ static void hid_proc_task(void* arg) {
             if (hid_host_device_get_params(dev_evt.handle, &params) != ESP_OK) continue;
 
             if (params.proto != HID_PROTOCOL_KEYBOARD && params.proto != HID_PROTOCOL_MOUSE) {
-                // Non-boot HID interface. Standard Consumer Control (headset buttons, media
-                // keyboards) declares subclass/protocol 0 and lands here. The interface must
-                // be opened before its report descriptor can be requested ("Interface is not
-                // ready" otherwise), so: open, parse, and close again when the descriptor
-                // turns out not to be a Consumer-page button bitmap.
+                // Non-boot interfaces (e.g. Consumer Control) must be opened before their
+                // report descriptor is readable; close again if it's not a consumer bitmap.
                 const hid_host_device_config_t probe_cfg = {
                     .callback = hid_interface_callback,
                     .callback_arg = ctx,
@@ -446,11 +446,11 @@ extern "C" {
 //
 // While a physical USB keyboard is connected, a KEYBOARD_TYPE child device is constructed so the
 // rest of the system (lvgl_hardware_keyboard_is_available(), Tactility's KeyboardDeviceListener)
-// sees a real hardware keyboard through the same generic device model as any other keyboard, e.g.
-// Devices/m5stack-tab5/Source/devices/tab5_keyboard.cpp. Real key events are delivered exclusively
-// through this device (kb_handle's hid_interface_callback pushes into its queue below); the
-// generic UsbHidEvent publish/subscribe channel above is unaffected for mouse move/button/scroll
-// and the right-click-as-ESC synthesis it already does.
+// sees a real hardware keyboard through the same generic device model as any other keyboard. Real
+// key events are queued here and drained by read_key(), same as every other keyboard driver in
+// the tree (tab5, tdeck, sdl) - none of them push via keyboard_emit_key() either, since
+// keyboard_read_key() already fans a read_key() result out to keyboard_subscribe()'d subscribers
+// itself.
 
 static error_t usb_hid_kb_device_start(Device* device) {
     auto* queue = xQueueCreate(USB_HID_KB_QUEUE_SIZE, sizeof(KeyboardKeyData));
@@ -493,6 +493,7 @@ Driver esp32_usbhost_hid_keyboard_driver = {
     .compatible = (const char*[]) { nullptr },
     .start_device = usb_hid_kb_device_start,
     .stop_device = usb_hid_kb_device_stop,
+    .probe = nullptr,
     .api = &esp32_usbhost_hid_keyboard_api,
     .device_type = &KEYBOARD_TYPE,
     .owner = nullptr,
@@ -509,6 +510,7 @@ static void usb_hid_keyboard_device_construct(UsbHidContext* ctx) {
         .name = "usb_keyboard0",
         .config = nullptr,
         .parent = nullptr,
+        .flags = 0,
         .internal = nullptr,
     };
 
@@ -627,6 +629,11 @@ static error_t stop_device(struct Device* device) {
     // hid_interface_callback() for this handle can race the queue delete below.
     if (auto kb_handle = ctx->kb_handle.load()) {
         hid_host_device_close(kb_handle);
+    }
+    // hid_host_uninstall() below can fail with any interface still registered, and its callback
+    // still references ctx, about to be deleted.
+    if (auto consumer_handle = ctx->consumer_handle.load()) {
+        hid_host_device_close(consumer_handle);
     }
     usb_hid_keyboard_device_destruct(ctx);
 

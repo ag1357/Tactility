@@ -102,7 +102,8 @@ bool hid_consumer_parse_descriptor(const uint8_t* descriptor, size_t length, Hid
             continue;
         }
 
-        uint8_t size = prefix & 0x03;
+        uint8_t raw_size = prefix & 0x03;
+        uint8_t size = (raw_size == 3) ? 4 : raw_size; // bSize==3 encodes a 4-byte item
         uint8_t type = (prefix >> 2) & 0x03;
         uint8_t tag = prefix & 0xF0;
         if (size > 0 && i + size > length) {

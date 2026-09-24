@@ -35,7 +35,7 @@ struct Context {
     // is a plain (non-atomic) field safely shared between the LVGL thread (writer, before
     // emitting APP_EVENT_CLOSE) and this dialog's own thread (reader, after waking from it).
     int32_t resultCode = 1; // Cancelled - safety-net default if closed without pressing a button
-    std::string resultText;
+    std::string resultText = {};
 };
 
 struct ButtonContext {
@@ -138,7 +138,7 @@ int32_t appMain(int argc, char* argv[]) {
 
     if (ctx.resultCode == 0) {
         // The caller captures this via an AppStream bound to our stdout (see start()); see
-        // AppStdioWrap.cpp for how printf() itself gets routed there on POSIX.
+        // Modules/app-module/source/stdio_wrap.cpp for how printf() itself gets routed there on POSIX.
         printf("%s", ctx.resultText.c_str());
     }
     return ctx.resultCode;
@@ -156,7 +156,11 @@ uint32_t start(uint32_t callerAppInstanceId, const std::string& title, const std
         .event_group = eventGroup,
     };
     uint32_t instanceId = 0;
-    app_start_for_result_with_streams(manifest.id, 3, argv, &binding, 1, callerAppInstanceId, &instanceId);
+    AppStartContext context = app_start_context_for_manifest(&manifest);
+    app_start_context_set_arguments_ext(&context, 3, argv);
+    app_start_context_set_streams(&context, &binding, 1);
+    app_start_context_set_parent(&context, callerAppInstanceId);
+    app_start_with_context(&context, &instanceId);
     return instanceId;
 }
 
@@ -166,6 +170,7 @@ extern const ::AppManifest manifest = {
     .category = APP_CATEGORY_SYSTEM,
     .location = { APP_LOCATION_MEMORY, reinterpret_cast<void*>(appMain) },
     .flags = APP_MANIFEST_FLAG_HIDDEN,
+    .stack = {}
 };
 
 }

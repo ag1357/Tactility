@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <app/env.h>
 #include <app/event.h>
 #include <app/execute.h>
 #include <app/install.h>
@@ -21,6 +22,11 @@ extern "C" {
 extern ServiceManifest app_internal_loader_service_manifest;
 
 static const ModuleSymbol SYMBOLS[] = {
+    // app/env
+    DEFINE_MODULE_SYMBOL(app_env_set),
+    DEFINE_MODULE_SYMBOL(app_env_unset),
+    DEFINE_MODULE_SYMBOL(app_env_get),
+    DEFINE_MODULE_SYMBOL(app_env_put),
     // app/event
     DEFINE_MODULE_SYMBOL(app_event_subscribe),
     DEFINE_MODULE_SYMBOL(app_event_subscribe_with_app_id),
@@ -33,6 +39,7 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(app_execute_with_streams),
     DEFINE_MODULE_SYMBOL(app_execute_for_result_with_streams),
     DEFINE_MODULE_SYMBOL(app_is_executable),
+    DEFINE_MODULE_SYMBOL(app_is_executable_path),
     // app/install
     DEFINE_MODULE_SYMBOL(app_get_install_path),
     DEFINE_MODULE_SYMBOL(app_install),
@@ -41,6 +48,8 @@ static const ModuleSymbol SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(app_io_read),
     DEFINE_MODULE_SYMBOL(app_io_write),
     DEFINE_MODULE_SYMBOL(app_io_close),
+    DEFINE_MODULE_SYMBOL(app_io_await),
+    DEFINE_MODULE_SYMBOL(app_io_bind_self),
     // app/manager
     DEFINE_MODULE_SYMBOL(app_manager_stop),
     DEFINE_MODULE_SYMBOL(app_manager_get_state),
@@ -71,11 +80,22 @@ static const ModuleSymbol SYMBOLS[] = {
     // app/scheduler
     DEFINE_MODULE_SYMBOL(app_scheduler_current_app_id),
     // app/start
+    DEFINE_MODULE_SYMBOL(app_start_context_for_manifest),
+    DEFINE_MODULE_SYMBOL(app_start_context_for_location),
+    DEFINE_MODULE_SYMBOL(app_start_context_from_id),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_stack),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_arguments_ext),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_arguments),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_streams),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_parent),
+    DEFINE_MODULE_SYMBOL(app_start_context_set_environment),
+    DEFINE_MODULE_SYMBOL(app_start_with_context),
     DEFINE_MODULE_SYMBOL(app_start),
     DEFINE_MODULE_SYMBOL(app_start_for_result),
     DEFINE_MODULE_SYMBOL(app_start_with_streams),
     DEFINE_MODULE_SYMBOL(app_start_for_result_with_streams),
     // app/stream
+    DEFINE_MODULE_SYMBOL(app_stream_bind_alias_fd),
     DEFINE_MODULE_SYMBOL(app_stream_subscribe),
     DEFINE_MODULE_SYMBOL(app_stream_unsubscribe),
     DEFINE_MODULE_SYMBOL(app_stream_await),

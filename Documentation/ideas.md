@@ -2,11 +2,16 @@
 
 ## Before release
 
+- Tactility/Source/service/autorotate/AutoRotate.cpp  
+  TODO: Display settings app might be saving DisplaySettings at the same time. This might corrupt the settings file.
 - Try out speed optimizations: https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/peripherals/lcd.html
   (relates to CONFIG_ESP32S3_DATA_CACHE_LINE_64B that is in use for RGB displays via the `device.properties` fix/workaround)
 
 ## Higher Priority
 
+- DisplayApi::get_frame_buffer should be nullable and have a default behaviour of assigning NULL to the output pointer. 
+  get_frame_buffer_count should be NULLable too, document it explicitly
+- Shell interpreter works recursive-descent algorithm, which requires a big stack size. Can we optimize this?
 - CrashDiagnostics shouldn't show a QR when there's no callstack
 - stopAppFromToolbar() in Tactility.cpp stops the top-most app. Change it so the toolbar knows for which app id it is created, so it can rely on that.
 - Warn if file operations are done from prohibited tasks (e.g. lvgl task)

@@ -25,6 +25,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+#include <lvgl/devices/keyboard.h>
 #include <lvgl/lvgl.h>
 
 #include <algorithm>
@@ -64,7 +65,7 @@ struct HidHostCtx {
     bool securityInitiated     = false;
     bool typeResolutionDone    = false;
     bool readyBlockFired       = false;
-    uint8_t encRetryCount      = 0;
+    uint8_t encRetryCount       = 0;
     lv_indev_t* mouseIndev     = nullptr;
     lv_obj_t*   mouseCursor    = nullptr;
     std::array<uint8_t, 6> peerAddr = {};
@@ -80,21 +81,19 @@ static std::atomic<int32_t> hid_host_mouse_y{0};
 static std::atomic<bool>    hid_host_mouse_btn{false};
 static std::atomic<bool>    hid_host_mouse_active{false};
 
-// ---- Dynamic KEYBOARD_TYPE device ----
-//
-// While a BLE HID keyboard is connected, a KEYBOARD_TYPE child device is constructed so the
-// rest of the system (lvgl_hardware_keyboard_is_available(), Tactility's
-// KeyboardDeviceListener) sees a real hardware keyboard through the same generic device model
-// as any other keyboard - mirroring the USB HID host's dynamic keyboard device. Real key
-// events are delivered exclusively through this device; there is no separate custom LVGL
-// keypad indev, so the on-screen software keyboard is correctly suppressed while the BLE
-// keyboard is connected and restored when it disconnects.
+// Mirrors the USB HID host's dynamic keyboard device: while a BLE HID keyboard is connected, a
+// KEYBOARD_TYPE child device is constructed so lvgl_hardware_keyboard_is_available() and
+// KeyboardDeviceListener see it like any other keyboard, correctly suppressing/restoring the
+// on-screen keyboard.
 
 constexpr auto BLE_HID_KB_QUEUE_SIZE = 16;
 
 static Device s_ble_kb_device = {};
 static bool s_ble_kb_device_active = false;
 static uint8_t s_ble_kb_prev_keys[6] = {};
+// The key published on press for each s_ble_kb_prev_keys slot, so release reuses the same
+// mapping (Shift etc. affect the pressed key's identity; the usage code alone doesn't).
+static uint32_t s_ble_kb_prev_published_keys[6] = {};
 
 static error_t bleKbDeviceStart(Device* device) {
     auto* queue = xQueueCreate(BLE_HID_KB_QUEUE_SIZE, sizeof(KeyboardKeyData));
@@ -150,11 +149,8 @@ static void bleKbDeviceConstruct() {
         return;
     }
 
-    // The kernel requires driver_construct() before a driver is bound to a device (it
-    // allocates the driver's internal use-count state). Platform drivers get this from
-    // module init; this driver lives in the Tactility layer, so construct it once here.
-    // Never destruct it: it is a static, app-lifetime object (destructing also requires an
-    // owner module).
+    // No owner module to construct this driver at init, so do it once here, lazily. Never
+    // destructed: it's a static, app-lifetime object.
     static bool s_driver_constructed = false;
     if (!s_driver_constructed) {
         if (driver_construct(&s_ble_kb_driver) != ERROR_NONE) {
@@ -169,6 +165,7 @@ static void bleKbDeviceConstruct() {
         .name = "ble_keyboard0",
         .config = nullptr,
         .parent = nullptr,
+        .flags = 0,
         .internal = nullptr,
     };
 
@@ -253,13 +250,17 @@ static void hidHostHandleKeyboardReport(const uint8_t* data, uint16_t len) {
     bool ctrl = (mod & KEYBOARD_HID_MOD_LEFT_CTRL) || (mod & KEYBOARD_HID_MOD_RIGHT_CTRL);
     bool alt  = (mod & KEYBOARD_HID_MOD_LEFT_ALT) || (mod & KEYBOARD_HID_MOD_RIGHT_ALT);
 
+    uint32_t next_published_keys[6] = {};
+
     for (int i = 0; i < 6; i++) {
         uint8_t kc = s_ble_kb_prev_keys[i];
         if (kc == 0) continue;
         bool still = false;
         for (int j = 0; j < nkeys; j++) { if (curr[j] == kc) { still = true; break; } }
         if (!still) {
-            uint32_t key = keyboard_key_from_hid_usage(0, kc, false, false);
+            // Release with the same mapped key that was published on press, not a fresh
+            // no-modifier mapping - Shift etc. affect the pressed key's identity.
+            uint32_t key = s_ble_kb_prev_published_keys[i];
             if (key) bleKbPublishKey(key, false, ctrl, alt, kc, mod);
         }
     }
@@ -267,14 +268,20 @@ static void hidHostHandleKeyboardReport(const uint8_t* data, uint16_t len) {
         uint8_t kc = curr[i];
         if (kc == 0) continue;
         bool had = false;
-        for (int j = 0; j < 6; j++) { if (s_ble_kb_prev_keys[j] == kc) { had = true; break; } }
+        int prev_idx = -1;
+        for (int j = 0; j < 6; j++) { if (s_ble_kb_prev_keys[j] == kc) { had = true; prev_idx = j; break; } }
+        uint32_t key;
         if (!had) {
-            uint32_t key = keyboard_key_from_hid_usage(mod, kc, false, false);
+            key = keyboard_key_from_hid_usage(mod, kc, false, false);
             if (key) bleKbPublishKey(key, true, ctrl, alt, kc, mod);
+        } else {
+            key = s_ble_kb_prev_published_keys[prev_idx];
         }
+        next_published_keys[i] = key;
     }
     std::memcpy(s_ble_kb_prev_keys, curr, nkeys);
     if (nkeys < 6) std::memset(s_ble_kb_prev_keys + nkeys, 0, 6 - nkeys);
+    std::memcpy(s_ble_kb_prev_published_keys, next_published_keys, sizeof(next_published_keys));
 }
 
 static void hidHostMouseReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
@@ -364,14 +371,13 @@ static void hidEncRetryTimerCb(void* /*arg*/) {
     if (hid_host_ctx) {
         auto& ctx = *hid_host_ctx;
         if (!ctx.typeResolutionDone) {
-            // Discovery (service/characteristic/descriptor/report map) is still in flight.
-            // Never force the subscribe/ready block to run before discovery completes: doing
-            // so raced the discovery chain and fired the ready block with an empty report
-            // list, so no reports were ever subscribed and no keyboard device was created.
-            // Instead keep waiting (bounded), and only proceed with whatever is known after
-            // the retries run out - a peer whose discovery genuinely stalled still ends up
-            // with a working connection for any reports that were resolved.
-            if (ctx.encRetryCount < 6) { // ~3s total alongside the chain's own progress
+            // Discovery is still in flight; forcing the subscribe/ready block early would fire
+            // it with an empty report list and never create a keyboard device. Wait (bounded)
+            // for inputRpts to populate; once it has, discovery is just the quick report-map
+            // read left, so cap retries much lower.
+            bool have_reports = !ctx.inputRpts.empty();
+            int retry_cap = have_reports ? 6 : 40; // ~3s vs ~20s
+            if (ctx.encRetryCount < retry_cap) {
                 ctx.encRetryCount++;
                 esp_timer_start_once(hid_enc_retry_timer, 500 * 1000);
                 return;
@@ -383,7 +389,7 @@ static void hidEncRetryTimerCb(void* /*arg*/) {
         } else {
             LOG_I(TAG, "Post-encryption delay complete — starting CCCD subscriptions");
         }
-        hidHostSubscribeNext(ctx);
+        hidHostSubscribeNext(*hid_host_ctx);
     }
 }
 
@@ -792,6 +798,7 @@ static int hidHostGapCb(struct ble_gap_event* event, void* /*arg*/) {
                 }
             } else {
                 LOG_W(TAG, "Connect failed status=%d", event->connect.status);
+                if (hid_enc_retry_timer) esp_timer_stop(hid_enc_retry_timer);
                 hid_host_ctx.reset();
                 Device* dev;
                 if (device_get_first_active_by_type(&BLUETOOTH_TYPE, &dev) == ERROR_NONE) {
@@ -808,10 +815,12 @@ static int hidHostGapCb(struct ble_gap_event* event, void* /*arg*/) {
 
         case BLE_GAP_EVENT_DISCONNECT: {
             LOG_I(TAG, "Disconnected reason=%d", event->disconnect.reason);
+            if (hid_enc_retry_timer) esp_timer_stop(hid_enc_retry_timer);
             lv_indev_t* saved_mouse  = hid_host_ctx ? hid_host_ctx->mouseIndev  : nullptr;
             lv_obj_t*   saved_cursor = hid_host_ctx ? hid_host_ctx->mouseCursor : nullptr;
             hid_host_ctx.reset();
             std::memset(s_ble_kb_prev_keys, 0, sizeof(s_ble_kb_prev_keys));
+            std::memset(s_ble_kb_prev_published_keys, 0, sizeof(s_ble_kb_prev_published_keys));
             hid_host_mouse_x.store(0);
             hid_host_mouse_y.store(0);
             hid_host_mouse_btn.store(false);
@@ -828,10 +837,8 @@ static int hidHostGapCb(struct ble_gap_event* event, void* /*arg*/) {
                 device_put(dev);
             }
 
-            // Destruct the dynamic keyboard device on the main dispatcher (device events
-            // trigger KeyboardDeviceListener's LVGL work, which must not run on the NimBLE
-            // host task). Its STOPPING event detaches the LVGL indev before the event queue
-            // is freed, and the software keyboard becomes available again.
+            // Runs on the main dispatcher: KeyboardDeviceListener's LVGL work must not run on
+            // the NimBLE host task.
             getMainDispatcher().dispatch([] {
                 bleKbDeviceDestruct();
             });
@@ -913,6 +920,7 @@ void hidHostConnect(const std::array<uint8_t, 6>& addr) {
     hid_host_mouse_btn.store(false);
     hid_host_mouse_active.store(false);
     std::memset(s_ble_kb_prev_keys, 0, sizeof(s_ble_kb_prev_keys));
+    std::memset(s_ble_kb_prev_published_keys, 0, sizeof(s_ble_kb_prev_published_keys));
 
     hid_host_ctx = std::make_unique<HidHostCtx>();
     hid_host_ctx->peerAddr = addr;

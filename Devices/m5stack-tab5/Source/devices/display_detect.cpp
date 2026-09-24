@@ -25,6 +25,7 @@ static void tab5_create_power_control(Device* io_expander1) {
         .name = "power_control0",
         .config = nullptr,
         .parent = nullptr,
+        .flags = {},
         .internal = nullptr,
     };
 
@@ -140,5 +141,5 @@ void tab5_detect_start() {
 }
 
 void tab5_detect_stop() {
-    device_listener_remove(on_display_detect_event);
+    device_listener_remove(on_display_detect_event, nullptr);
 }

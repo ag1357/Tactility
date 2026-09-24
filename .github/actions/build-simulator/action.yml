@@ -4,11 +4,8 @@ inputs:
   os_name:
     description: A descriptive name for the operating system (e.g. linux, windows)
     required: true
-  platform_name:
-    description: A descriptive name for the target platform (e.g. amd64, aarch64, etc.)
-    required: true
-  publish:
-    description: A boolean that enables publishing of artifacts
+  architecture:
+    description: A descriptive name for the target architecture (e.g. x86_64, aarch64, etc.)
     required: true
 
 runs:
@@ -40,6 +37,13 @@ runs:
       uses: jwlawson/actions-setup-cmake@v2
       with:
         cmake-version: '3.31.x'
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - name: Install mbedtls codegen Python dependencies
+      shell: bash
+      run: pip install -r Libraries/mbedtls/scripts/driver.requirements.txt
     - name: "Prepare Project"
       shell: bash
       run: cmake -S ./ -B buildsim
@@ -48,11 +52,10 @@ runs:
       run: cmake --build buildsim --target Tactility
     - name: 'Release'
       shell: bash
-      run: Buildscripts/release-simulator.sh buildsim release/Simulator-${{ inputs.os_name }}-${{ inputs.platform_name }}
+      run: Buildscripts/release-simulator.sh buildsim release/Simulator-${{ inputs.os_name }}-${{ inputs.architecture }}
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v4
-      if: ${{ inputs.publish == 'true' }}
       with:
-        name: Simulator-${{ inputs.os_name }}-${{ inputs.platform_name }}
-        path: release/Simulator-${{ inputs.os_name }}-${{ inputs.platform_name }}
+        name: Simulator-${{ inputs.os_name }}-${{ inputs.architecture }}
+        path: release/Simulator-${{ inputs.os_name }}-${{ inputs.architecture }}
         retention-days: 30
