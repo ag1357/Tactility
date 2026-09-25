@@ -19,3 +19,8 @@ target_link_libraries(${COMPONENT_LIB} INTERFACE TactilityKernel)
 target_link_libraries(${COMPONENT_LIB} INTERFACE lvgl)
 target_link_libraries(${COMPONENT_LIB} INTERFACE minmea)
 target_link_libraries(${COMPONENT_LIB} INTERFACE minitar)
+
+# The app's sdkconfig does not describe the prebuilt firmware LVGL ABI.
+target_compile_definitions(${COMPONENT_LIB} INTERFACE
+    LV_CONF_KCONFIG_EXTERNAL_INCLUDE="tactility_lvgl_sdkconfig.h"
+)

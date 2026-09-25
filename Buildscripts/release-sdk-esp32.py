@@ -5,6 +5,10 @@ import glob
 import subprocess
 import sys
 import importlib.util
+import json
+import re
+import shutil
+from pathlib import Path
 from textwrap import dedent
 
 _shared_spec = importlib.util.spec_from_file_location("release_sdk_shared", os.path.join("Buildscripts", "release-sdk-shared.py"))
@@ -57,6 +61,51 @@ def add_module(target_path, module_name):
     cmakelists_content = create_module_cmakelists(module_name)
     shared.write_module_cmakelists(os.path.join(target_path, f"Modules/{module_name}/CMakeLists.txt"), cmakelists_content)
 
+def add_lvgl(target_path, build_path="build"):
+    """Use the headers and Kconfig values that produced the packaged archive."""
+    build = Path(build_path)
+    description = json.loads((build / "project_description.json").read_text())
+    component = description["build_component_info"]["lvgl__lvgl"]
+    source = Path(component["dir"])
+    archive = Path(component["file"])
+    config = (build / "config/sdkconfig.h").read_text()
+    definitions = re.findall(r"^#define (CONFIG_LV_\w+)([^\n]*)$", config, re.MULTILINE)
+    if not definitions or not archive.is_file() or not (source / "lvgl.h").is_file():
+        raise RuntimeError("Build LVGL before generating its SDK headers and configuration")
+    if not any(name == "CONFIG_LV_CONF_SKIP" for name, _ in definitions):
+        raise RuntimeError("SDK generation requires the firmware's LVGL Kconfig configuration")
+
+    destination = Path(target_path) / "Libraries/lvgl"
+    include = destination / "include"
+    # A repeated release must not retain headers from a formerly packaged LVGL version.
+    if include.exists():
+        shutil.rmtree(include)
+    include.mkdir(parents=True)
+    (destination / "binary").mkdir(exist_ok=True)
+    shutil.copy2(archive, destination / "binary/liblvgl.a")
+    for name in ("lvgl.h", "lv_version.h"):
+        shutil.copy2(source / name, include / name)
+    for header in (source / "src").rglob("*.h"):
+        output = include / header.relative_to(source)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(header, output)
+    for license_file in source.glob("LICENCE*.*"):
+        shutil.copy2(license_file, destination / license_file.name)
+
+    # External apps have their own sdkconfig.h. Reset all LVGL Kconfig switches,
+    # including disabled ones, then supply only this archive's enabled values.
+    symbols = set(re.findall(r"\bCONFIG_LV_\w+", config))
+    for kconfig in source.rglob("Kconfig*"):
+        symbols.update("CONFIG_" + name for name in re.findall(
+            r"^\s*(?:menu)?config\s+(LV_\w+)", kconfig.read_text(), re.MULTILINE))
+    lines = ["/* Generated from the SDK firmware build; do not use app LVGL settings. */",
+             "#ifndef TACTILITY_LVGL_SDKCONFIG_H", "#define TACTILITY_LVGL_SDKCONFIG_H",
+             '#include "esp_attr.h"']
+    lines.extend("#undef " + name for name in sorted(symbols))
+    lines.extend("#define " + name + value for name, value in definitions)
+    lines.extend(["#endif", ""])
+    (include / "tactility_lvgl_sdkconfig.h").write_text("\n".join(lines))
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: release-sdk-esp32.py [target_path]")
@@ -83,13 +132,6 @@ def main():
         {'src': 'TactilityKernel/include/**', 'dst': 'Libraries/TactilityKernel/include/'},
         {'src': 'TactilityKernel/CMakeLists.txt', 'dst': 'Libraries/TactilityKernel/'},
         {'src': 'TactilityKernel/*.md', 'dst': 'Libraries/TactilityKernel/'},
-        # lvgl (basics)
-        {'src': 'build/esp-idf/lvgl__lvgl/liblvgl__lvgl.a', 'dst': 'Libraries/lvgl/binary/liblvgl.a'},
-        {'src': 'Libraries/lvgl/lvgl.h', 'dst': 'Libraries/lvgl/include/'},
-        {'src': 'Libraries/lvgl/lv_version.h', 'dst': 'Libraries/lvgl/include/'},
-        {'src': 'Libraries/lvgl/LICENCE*.*', 'dst': 'Libraries/lvgl/'},
-        {'src': 'Libraries/lvgl/src/lv_conf_kconfig.h', 'dst': 'Libraries/lvgl/include/lv_conf.h'},
-        {'src': 'Libraries/lvgl/src/**/*.h', 'dst': 'Libraries/lvgl/include/src/'},
         # elf_loader
         {'src': 'managed_components/espressif__elf_loader/*.cmake', 'dst': 'Libraries/elf_loader/'},
         {'src': 'managed_components/espressif__elf_loader/*.lf', 'dst': 'Libraries/elf_loader/'},
@@ -108,6 +150,7 @@ def main():
     ]
 
     shared.map_copy(mappings, target_path)
+    add_lvgl(target_path)
 
     # Modules
     module_names = shared.read_module_list(os.path.join('Buildscripts', 'release-sdk-modules.txt'))
