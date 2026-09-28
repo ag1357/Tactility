@@ -57,6 +57,25 @@
 		pin-data-in  = <&gpio0 11 GPIO_FLAG_NONE>;   // ASDOUT (codec ADC -> ESP)
 	};
 
+	// Generic external I2C expansion bus for user peripherals on the expansion
+	// header (STEMMA QT / Qwiic gamepads, keyboards, sensors). The official
+	// schematic routes GPIO4/GPIO5 to the header with no other claimed
+	// function, so this node claims them through the GPIO descriptor
+	// ownership mechanism (fails closed on conflict). Second P4 I2C
+	// controller at the 100 kHz mixed-speed default. External apps open this
+	// controller by name through the exported I2C-controller API
+	// (device_get_by_name("i2c-external")). No IRQ, no eFuse and no permanent
+	// configuration; no pull-up flags, so attached devices must supply their
+	// own 3.3 V-referenced pull-ups (STEMMA QT boards do). Internal I2C0
+	// (GPIO7/8) is untouched and GPIO2/3 stay reserved for AetherLink UART.
+	i2c_external: i2c-external {
+		compatible = "espressif,esp32-i2c-master";
+		port = <I2C_NUM_1>;
+		clock-frequency = <100000>;
+		pin-sda = <&gpio0 4 GPIO_FLAG_NONE>;
+		pin-scl = <&gpio0 5 GPIO_FLAG_NONE>;
+	};
+
 	i2c_internal: i2c0 {
 		compatible = "espressif,esp32-i2c-master";
 		port = <I2C_NUM_0>;
